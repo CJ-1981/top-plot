@@ -1892,3 +1892,163 @@ console.log(JSON.stringify({
 
 
 
+
+
+def test_file_size_warning_standalone():
+    """Verify standalone HTML checks file sizes before parsing."""
+    import top_plot_v2 as tp
+    import tempfile, os
+    out = os.path.join(tempfile.gettempdir(), "test_filesize.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "50" in content and ("MB" in content or "size" in content.lower()), "Missing file size check"
+    assert "large" in content.lower() or "warning" in content.lower(), "Missing size warning logic"
+
+    handle_files_block = content.split("function handleFiles(files)")[1].split("function processFileBatch")[0]
+    assert "size" in handle_files_block.lower(), "Missing size check in handleFiles"
+    assert "50" in handle_files_block, "Missing 50 MB threshold in handleFiles"
+    assert "showToast" in handle_files_block, "Missing showToast call for large file warning"
+    os.unlink(out)
+
+
+def test_qt_large_file_warning():
+    """Verify Qt handle_dropped_paths prompts confirmation dialog when file exceeds 50 MB."""
+    import os
+    import tempfile
+    from unittest.mock import patch
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from top_plot_v2 import TopPlotMainWindow
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    window = TopPlotMainWindow()
+    window.jobs.clear()
+
+    with tempfile.TemporaryDirectory() as td:
+        dummy_file = os.path.join(td, "log_top@20261027_12-00-00.log")
+        with open(dummy_file, "w", encoding="utf-8") as f:
+            f.write("20261027_12-00-00\nMem: 8000K total, 4000K used\n800%cpu 10%user\n")
+
+        yes_btn = getattr(QMessageBox.StandardButton, "Yes", QMessageBox.Yes) if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
+        no_btn = getattr(QMessageBox.StandardButton, "No", QMessageBox.No) if hasattr(QMessageBox, "StandardButton") else QMessageBox.No
+
+        # 1. When file > 50 MB and user chooses "No" -> Abort, do not load job
+        with patch("os.path.getsize", return_value=60 * 1024 * 1024), \
+             patch.object(QMessageBox, "question", return_value=no_btn) as mock_question:
+            window.handle_dropped_paths([dummy_file])
+            assert mock_question.called, "QMessageBox.question should have been prompted"
+            args, _ = mock_question.call_args
+            assert "Large" in args[1] or "Warning" in args[1]
+            assert "50" in args[2] or "exceed" in args[2]
+            assert len(window.jobs) == 0
+            assert not window.progress_bar.isVisible()
+
+        # 2. When file > 50 MB and user chooses "Yes" -> Continue loading job
+        with patch("os.path.getsize", return_value=60 * 1024 * 1024), \
+             patch.object(QMessageBox, "question", return_value=yes_btn) as mock_question:
+            window.handle_dropped_paths([dummy_file])
+            assert mock_question.called
+            assert len(window.jobs) == 1
+            assert not window.progress_bar.isVisible()
+
+        window.jobs.clear()
+
+        # 3. When file <= 50 MB -> No warning prompt at all
+        with patch("os.path.getsize", return_value=10 * 1024 * 1024), \
+             patch.object(QMessageBox, "question") as mock_question:
+            window.handle_dropped_paths([dummy_file])
+            assert not mock_question.called
+            assert len(window.jobs) == 1
+
+
+def test_standalone_js_file_size_warning():
+    """Verify standalone JS handleFiles displays warning toast when files exceed 50 MB."""
+    import top_plot_v2 as tp
+    import pytest
+    import tempfile, os, subprocess, json, shutil
+
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for JS file size warning test")
+
+    out = os.path.join(tempfile.gettempdir(), "test_js_filesize.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
+
+    mock_prefix = """
+const appendedToasts = [];
+const createMockElem = () => ({
+    style: {},
+    className: '',
+    textContent: '',
+    classList: { add: () => {}, remove: () => {}, toggle: () => {} },
+    appendChild: (child) => { appendedToasts.push(child); },
+    addEventListener: () => {},
+    querySelector: () => null,
+    querySelectorAll: () => []
+});
+global.requestAnimationFrame = (cb) => { if (cb) cb(); };
+global.window = {
+    addEventListener: () => {}
+};
+global.document = {
+    createElement: () => createMockElem(),
+    getElementById: (id) => createMockElem(),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: createMockElem()
+};
+global.FileReader = class {
+    readAsText(file, enc) {
+        // do nothing
+    }
+};
+"""
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
+
+    test_harness = """
+// 1. Test with a file > 50 MB (55 MB = 55 * 1024 * 1024 bytes)
+const largeFile = { name: "large_log.txt", size: 55 * 1024 * 1024 };
+handleFiles([largeFile]);
+
+const largeToasts = appendedToasts.map(t => ({ text: t.textContent, className: t.className }));
+appendedToasts.length = 0;
+
+// 2. Test with small files <= 50 MB
+const smallFile = { name: "small_log.txt", size: 10 * 1024 * 1024 };
+handleFiles([smallFile]);
+
+const smallToasts = appendedToasts.map(t => ({ text: t.textContent, className: t.className }));
+
+console.log(JSON.stringify({
+    largeToasts,
+    smallToasts
+}));
+"""
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_filesize.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
+
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert len(res["largeToasts"]) == 1
+        assert "50 MB" in res["largeToasts"][0]["text"]
+        assert "large_log.txt" in res["largeToasts"][0]["text"]
+        assert "55.0 MB" in res["largeToasts"][0]["text"]
+        assert "toast-warning" in res["largeToasts"][0]["className"]
+
+        assert len(res["smallToasts"]) == 0
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)
+
+

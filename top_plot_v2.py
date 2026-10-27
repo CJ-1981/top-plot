@@ -2515,6 +2515,10 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       background-color: #10b981;
       border: 1px solid #059669;
     }
+    .toast-warning {
+      background-color: #f59e0b;
+      border: 1px solid #d97706;
+    }
   </style>
   __PLOTLY_SCRIPT_TAG__
 </head>
@@ -3833,7 +3837,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       const container = document.getElementById('toastContainer');
       if (!container) return;
       const toast = document.createElement('div');
-      const toastType = (type === 'success') ? 'toast-success' : 'toast-error';
+      const toastType = (type === 'success') ? 'toast-success' : (type === 'warning') ? 'toast-warning' : 'toast-error';
       toast.className = `toast-notification ${toastType}`;
       toast.textContent = message;
       container.appendChild(toast);
@@ -3854,6 +3858,19 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
 
     function handleFiles(files) {
       if (!files || !files.length) return;
+
+      const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024; // 50 MB
+      const largeFiles = [];
+      for (let i = 0; i < files.length; i++) {
+        if (files[i] && files[i].size && files[i].size > LARGE_FILE_THRESHOLD) {
+          const sizeMb = (files[i].size / (1024 * 1024)).toFixed(1);
+          largeFiles.push(`${files[i].name} (${sizeMb} MB)`);
+        }
+      }
+      if (largeFiles.length > 0) {
+        showToast(`Warning: Large file(s) detected (>50 MB): ${largeFiles.join(', ')}. Loading may take longer.`, "warning");
+      }
+
       showSpinner(`Parsing ${files.length} log file(s)...`);
       let pending = files.length;
       const fileBatch = {};
@@ -4997,6 +5014,41 @@ if GUI_AVAILABLE:
                     self.hide_loading()
                     QMessageBox.warning(self, "No Log Files", "No log files found in dropped items.")
                     return
+
+                # Check for large files (> 50 MB) and warn user
+                large_files = []
+                checked_paths = set()
+                for j in jobs:
+                    for fp in (j.top_file, j.topmen_file):
+                        if fp and fp not in checked_paths and os.path.isfile(fp):
+                            checked_paths.add(fp)
+                            try:
+                                sz = os.path.getsize(fp)
+                                if sz > 50 * 1024 * 1024:
+                                    size_mb = sz / (1024 * 1024)
+                                    large_files.append((os.path.basename(fp), size_mb))
+                            except OSError:
+                                pass
+
+                if large_files:
+                    file_list_str = "\n".join(f"• {name} ({sz:.1f} MB)" for name, sz in large_files)
+                    msg = (
+                        f"The following log file(s) exceed 50 MB:\n\n{file_list_str}\n\n"
+                        "Parsing very large files may take a long time or cause the application to become unresponsive.\n\n"
+                        "Continue anyway?"
+                    )
+                    yes_btn = getattr(QMessageBox.StandardButton, "Yes", QMessageBox.Yes) if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
+                    no_btn = getattr(QMessageBox.StandardButton, "No", QMessageBox.No) if hasattr(QMessageBox, "StandardButton") else QMessageBox.No
+                    reply = QMessageBox.question(
+                        self,
+                        "Large File Warning",
+                        msg,
+                        yes_btn | no_btn,
+                        no_btn,
+                    )
+                    if reply != yes_btn:
+                        self.hide_loading()
+                        return
 
                 # De-duplicate against existing jobs in queue
                 existing_by_label = {j.label: j for j in self.jobs}
