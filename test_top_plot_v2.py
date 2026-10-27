@@ -1182,6 +1182,27 @@ def test_export_controls_in_standalone_and_qt():
                 os.unlink(q_csv_path)
 
 
+def test_standalone_html_has_spinner_and_toast():
+    """Verify standalone HTML contains loading spinner and toast notification elements."""
+    import top_plot_v2 as tp
+    import tempfile, os
+    out = os.path.join(tempfile.gettempdir(), "test_spinner.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "loading-spinner" in content, "Missing loading spinner CSS/HTML"
+    assert "loadingOverlay" in content, "Missing loadingOverlay element"
+    assert "showSpinner" in content, "Missing showSpinner function"
+    assert "hideSpinner" in content, "Missing hideSpinner function"
+    assert "showToast" in content, "Missing showToast function"
+    assert "toastContainer" in content or "toast-container" in content, "Missing toast container"
+    assert "toast-error" in content, "Missing toast-error class"
+    assert "toast-success" in content, "Missing toast-success class"
+    assert "Failed to parse:" in content, "Missing parse error feedback handling"
+    os.unlink(out)
+
+
+
 
 
 

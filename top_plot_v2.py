@@ -2030,10 +2030,83 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       fill: var(--bg-card) !important;
       stroke: var(--border) !important;
     }
+
+    /* Loading Spinner Overlay */
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(17, 24, 39, 0.7);
+      backdrop-filter: blur(2px);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(255, 255, 255, 0.2);
+      border-top-color: var(--accent-cpu);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .loading-text {
+      margin-top: 16px;
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--fg-text);
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Toast Notifications */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 10000;
+      pointer-events: none;
+    }
+    .toast-notification {
+      pointer-events: auto;
+      min-width: 260px;
+      max-width: 420px;
+      padding: 12px 18px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      font-size: 0.88rem;
+      font-weight: 500;
+      color: #ffffff;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .toast-notification.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .toast-error {
+      background-color: #ef4444;
+      border: 1px solid #dc2626;
+    }
+    .toast-success {
+      background-color: #10b981;
+      border: 1px solid #059669;
+    }
   </style>
   __PLOTLY_SCRIPT_TAG__
 </head>
 <body data-theme="Dark Fusion">
+  <div id="loadingOverlay" class="loading-overlay"><div class="loading-spinner"></div><div class="loading-text">Parsing log files...</div></div>
+  <div id="toastContainer" class="toast-container"></div>
   <div class="dashboard-container">
     <!-- Header Bar -->
     <div class="header-bar">
@@ -3054,8 +3127,53 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       return merged;
     }
 
+    // Loading Spinner & Toast Notification Helpers
+    function showSpinner(msg) {
+      const overlay = document.getElementById('loadingOverlay');
+      if (overlay) {
+        const textEl = overlay.querySelector('.loading-text');
+        if (textEl && msg) {
+          textEl.textContent = msg;
+        } else if (textEl) {
+          textEl.textContent = 'Parsing log files...';
+        }
+        overlay.style.display = 'flex';
+      }
+    }
+
+    function hideSpinner() {
+      const overlay = document.getElementById('loadingOverlay');
+      if (overlay) {
+        overlay.style.display = 'none';
+      }
+    }
+
+    function showToast(message, type) {
+      const container = document.getElementById('toastContainer');
+      if (!container) return;
+      const toast = document.createElement('div');
+      const toastType = (type === 'success') ? 'toast-success' : 'toast-error';
+      toast.className = `toast-notification ${toastType}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.classList.add('show');
+      });
+
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => {
+          if (toast.parentNode) {
+            toast.parentNode.removeChild(toast);
+          }
+        }, 300);
+      }, 4000);
+    }
+
     function handleFiles(files) {
       if (!files || !files.length) return;
+      showSpinner(`Parsing ${files.length} log file(s)...`);
       let pending = files.length;
       const fileBatch = {};
 
@@ -3086,7 +3204,16 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
 
           pending--;
           if (pending === 0) {
-            processFileBatch(fileBatch);
+            setTimeout(() => {
+              processFileBatch(fileBatch);
+            }, 30);
+          }
+        };
+        reader.onerror = () => {
+          pending--;
+          showToast(`Failed to parse: ${file.name} (read error)`, "error");
+          if (pending === 0) {
+            hideSpinner();
           }
         };
         reader.readAsText(file, "utf-8");
@@ -3094,31 +3221,44 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
     }
 
     function processFileBatch(fileBatch) {
-      let firstNewKey = null;
-      for (const label in fileBatch) {
-        const b = fileBatch[label];
-        let sessionParsed = null;
+      try {
+        let firstNewKey = null;
+        for (const label in fileBatch) {
+          const b = fileBatch[label];
+          let sessionParsed = null;
 
-        if (b.top && b.topmen) {
-          const pTop = parseTopLog(b.top, label);
-          const pMen = parseTopLog(b.topmen, label);
-          sessionParsed = mergeTopAndTopmen(pTop, pMen, label);
-        } else if (b.top) {
-          sessionParsed = parseTopLog(b.top, label);
-        } else if (b.topmen) {
-          sessionParsed = parseTopLog(b.topmen, label);
-        } else if (b.other) {
-          sessionParsed = parseTopLog(b.other, label);
+          try {
+            if (b.top && b.topmen) {
+              const pTop = parseTopLog(b.top, label);
+              const pMen = parseTopLog(b.topmen, label);
+              sessionParsed = mergeTopAndTopmen(pTop, pMen, label);
+            } else if (b.top) {
+              sessionParsed = parseTopLog(b.top, label);
+            } else if (b.topmen) {
+              sessionParsed = parseTopLog(b.topmen, label);
+            } else if (b.other) {
+              sessionParsed = parseTopLog(b.other, label);
+            }
+          } catch (err) {
+            console.error(err);
+            showToast(`Failed to parse: ${label} (${err.message})`, "error");
+            continue;
+          }
+
+          if (sessionParsed && sessionParsed.timestamps && sessionParsed.timestamps.length > 0) {
+            loadedSessions[label] = sessionParsed;
+            if (!firstNewKey) firstNewKey = label;
+            showToast(`Loaded ${label} (${sessionParsed.timestamps.length} snapshots)`, "success");
+          } else {
+            showToast(`Failed to parse: ${label} (no valid snapshots found)`, "error");
+          }
         }
 
-        if (sessionParsed && sessionParsed.timestamps && sessionParsed.timestamps.length > 0) {
-          loadedSessions[label] = sessionParsed;
-          if (!firstNewKey) firstNewKey = label;
+        if (firstNewKey) {
+          updateSessionPills(firstNewKey);
         }
-      }
-
-      if (firstNewKey) {
-        updateSessionPills(firstNewKey);
+      } finally {
+        hideSpinner();
       }
     }
 
