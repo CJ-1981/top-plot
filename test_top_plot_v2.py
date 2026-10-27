@@ -1072,6 +1072,117 @@ def test_shr_in_html_and_standalone():
         assert "max_shr_mb" in app_html or "shr_mb" in app_html
 
 
+def test_csv_export():
+    """Verify CSV export produces correct tabular output."""
+    import top_plot_v2 as tp
+    import tempfile, os, csv
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(
+            timestamp="T1",
+            cpu_metrics={"%cpu_total": 300.0},
+            mem_metrics={"mem_used_mb": 5000.0},
+            processes={100: tp.ProcessRecord(pid=100, user="root", virt_mb=1.0, res_mb=45.0, shr_mb=10.0, state="S", cpu=50.0, mem_pct=1.2, args="test_proc")}
+        ),
+        tp.Snapshot(
+            timestamp="T2",
+            cpu_metrics={"%cpu_total": 250.0},
+            mem_metrics={"mem_used_mb": 5100.0},
+            processes={100: tp.ProcessRecord(pid=100, user="root", virt_mb=1.0, res_mb=48.0, shr_mb=11.0, state="S", cpu=40.0, mem_pct=1.3, args="test_proc")}
+        ),
+    ])
+
+    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as f:
+        tmp_path = f.name
+    try:
+        result_path = data.to_csv(tmp_path)
+        assert os.path.exists(result_path)
+        with open(result_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+        assert "Timestamp" in header
+        assert "System_CPU%" in header
+        assert any("100" in col for col in header)
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_json_export():
+    """Verify JSON export produces structured telemetry output."""
+    import top_plot_v2 as tp
+    import tempfile, os, json
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(
+            timestamp="T1",
+            cpu_metrics={"%cpu_total": 300.0},
+            mem_metrics={"mem_used_mb": 5000.0},
+            processes={100: tp.ProcessRecord(pid=100, user="root", virt_mb=1.0, res_mb=45.0, shr_mb=10.0, state="S", cpu=50.0, mem_pct=1.2, args="test_proc")}
+        ),
+    ])
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
+        tmp_path = f.name
+    try:
+        result_path = data.to_json(tmp_path)
+        assert os.path.exists(result_path)
+        with open(result_path, "r", encoding="utf-8") as f:
+            out_data = json.load(f)
+        assert "timestamps" in out_data
+        assert "system_metrics" in out_data
+        assert "processes" in out_data
+        assert "100" in out_data["processes"]
+        assert out_data["processes"]["100"]["args"] == "test_proc"
+        assert out_data["processes"]["100"]["max_cpu"] == 50.0
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_export_controls_in_standalone_and_qt():
+    """Verify CSV and JSON export buttons in standalone app and Qt window."""
+    import os
+    import tempfile
+    import top_plot_v2 as tp
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        standalone_path = os.path.join(tmpdir, "app.html")
+        tp.build_standalone_app(standalone_path)
+        with open(standalone_path, "r", encoding="utf-8") as f:
+            app_html = f.read()
+        assert "btnDownloadCsv" in app_html
+        assert "btnDownloadJson" in app_html
+        assert "downloadCSV" in app_html
+        assert "downloadJSON" in app_html
+
+    if tp.GUI_AVAILABLE:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+        win = tp.TopPlotMainWindow()
+        assert hasattr(win, "btn_export_csv")
+        assert hasattr(win, "export_csv")
+        data = tp.ParsedLogV2(snapshots=[
+            tp.Snapshot(
+                timestamp="T1",
+                cpu_metrics={"%cpu_total": 100.0},
+                mem_metrics={"mem_used_mb": 2000.0},
+                processes={10: tp.ProcessRecord(pid=10, user="system", virt_mb=10.0, res_mb=5.0, shr_mb=2.0, state="S", cpu=12.0, mem_pct=0.5, args="proc_a")}
+            )
+        ])
+        win.current_parsed = data
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            q_csv_path = f.name
+        try:
+            win.export_csv(file_path=q_csv_path)
+            assert os.path.exists(q_csv_path)
+            with open(q_csv_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            assert "proc_a" in content
+        finally:
+            if os.path.exists(q_csv_path):
+                os.unlink(q_csv_path)
+
+
+
 
 
 

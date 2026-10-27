@@ -17,6 +17,7 @@ import os
 import sys
 import logging
 import json
+import csv
 import html
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,57 @@ class ParsedLogV2:
             ranked.append((pid, m["args"], m["max_res_mb"]))
         ranked.sort(key=lambda x: x[2], reverse=True)
         return ranked[:limit]
+
+    def to_csv(self, file_path: str) -> str:
+        """Export telemetry data as CSV."""
+        all_pids = self.get_all_pids()
+        pid_names = {pid: self.get_process_name(pid) for pid in all_pids}
+
+        headers = ["Timestamp", "System_CPU%", "System_RAM_MB", "Swap_Used_MB"]
+        for pid in all_pids:
+            safe_name = pid_names[pid].replace(",", "_")[:30]
+            headers.extend([f"PID_{pid}_{safe_name}_CPU%", f"PID_{pid}_{safe_name}_RES_MB"])
+
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            for i, snap in enumerate(self.snapshots):
+                row = [
+                    snap.timestamp,
+                    snap.cpu_metrics.get("%cpu_total", 0.0),
+                    snap.mem_metrics.get("mem_used_mb", 0.0),
+                    snap.mem_metrics.get("swap_used_mb", 0.0),
+                ]
+                for pid in all_pids:
+                    proc = snap.processes.get(pid)
+                    row.append(proc.cpu if proc else 0.0)
+                    row.append(proc.res_mb if proc else 0.0)
+                writer.writerow(row)
+        return file_path
+
+    def to_json(self, file_path: str) -> str:
+        """Export telemetry data as JSON."""
+        all_pids = self.get_all_pids()
+        result = {
+            "timestamps": self.timestamps,
+            "system_metrics": self.system_metrics,
+            "processes": {}
+        }
+        for pid in all_pids:
+            m = self.get_pid_metrics(pid)
+            result["processes"][str(pid)] = {
+                "args": m["args"],
+                "cpu": m["cpu"],
+                "res_mb": m["res_mb"],
+                "shr_mb": m["shr_mb"],
+                "mem_pct": m["mem_pct"],
+                "max_cpu": m["max_cpu"],
+                "avg_cpu": m["avg_cpu"],
+                "max_res_mb": m["max_res_mb"]
+            }
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+        return file_path
 
 
 # ----------------------------------------------------------------------
@@ -2031,6 +2083,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           <label class="toggle-label"><input type="checkbox" id="chkSysMem" checked /> <span>System RAM MB</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkCpuBreakdown" /> <span>CPU Breakdown</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkSysSwap" /> <span>System Swap MB</span></label>
+          <button type="button" class="btn" id="btnDownloadCsv">📊 Download CSV</button>
+          <button type="button" class="btn" id="btnDownloadJson">📋 Download JSON</button>
         </div>
       </div>
 
@@ -2662,6 +2716,93 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         Plotly.restyle(plotDiv, { visible: e.target.checked }, [sysTraceMap.sys_swap]);
       }
     });
+
+    // CSV / JSON Export Handlers
+    function downloadCSV() {
+      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const session = loadedSessions[activeSessionKey];
+      const allPids = session.allPids || [];
+      const timestamps = session.timestamps || [];
+      const sysMetrics = session.systemMetrics || {};
+
+      const headers = ["Timestamp", "System_CPU%", "System_RAM_MB", "Swap_Used_MB"];
+      allPids.forEach(pid => {
+        const p = session.pidData[pid];
+        const safeName = (p && p.args ? p.args : ("PID_" + pid)).replace(/,/g, '_').substring(0, 30);
+        headers.push(`PID_${pid}_${safeName}_CPU%`);
+        headers.push(`PID_${pid}_${safeName}_RES_MB`);
+      });
+
+      const rows = [headers.join(",")];
+      for (let i = 0; i < timestamps.length; i++) {
+        const ts = timestamps[i];
+        const sysCpu = (sysMetrics["%cpu_total"] && sysMetrics["%cpu_total"][i] !== undefined) ? sysMetrics["%cpu_total"][i] : 0.0;
+        const sysMem = (sysMetrics["mem_used_mb"] && sysMetrics["mem_used_mb"][i] !== undefined) ? sysMetrics["mem_used_mb"][i] : 0.0;
+        const sysSwap = (sysMetrics["swap_used_mb"] && sysMetrics["swap_used_mb"][i] !== undefined) ? sysMetrics["swap_used_mb"][i] : 0.0;
+        const row = [ts, sysCpu, sysMem, sysSwap];
+
+        allPids.forEach(pid => {
+          const p = session.pidData[pid];
+          const cpuVal = (p && p.cpu && p.cpu[i] !== undefined) ? p.cpu[i] : 0.0;
+          const resVal = (p && p.res_mb && p.res_mb[i] !== undefined) ? p.res_mb[i] : 0.0;
+          row.push(cpuVal);
+          row.push(resVal);
+        });
+        rows.push(row.join(","));
+      }
+
+      const csvContent = rows.join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const baseName = session.label ? session.label.replace(/\\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\\-]/g, "_") : "telemetry";
+      a.download = baseName + ".csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadJSON() {
+      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const session = loadedSessions[activeSessionKey];
+      const result = {
+        timestamps: session.timestamps,
+        system_metrics: session.systemMetrics,
+        processes: {}
+      };
+      const allPids = session.allPids || [];
+      allPids.forEach(pid => {
+        const p = session.pidData[pid];
+        if (p) {
+          result.processes[String(pid)] = {
+            args: p.args,
+            cpu: p.cpu,
+            res_mb: p.res_mb,
+            shr_mb: p.shr_mb,
+            mem_pct: p.mem_pct,
+            max_cpu: p.max_cpu,
+            avg_cpu: p.cpu && p.cpu.length ? (p.cpu.reduce((a, b) => a + b, 0) / p.cpu.length) : 0.0,
+            max_res_mb: p.max_res_mb
+          };
+        }
+      });
+      const jsonContent = JSON.stringify(result, null, 2);
+      const blob = new Blob([jsonContent], { type: "application/json;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const baseName = session.label ? session.label.replace(/\\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\\-]/g, "_") : "telemetry";
+      a.download = baseName + ".json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('btnDownloadCsv')?.addEventListener('click', downloadCSV);
+    document.getElementById('btnDownloadJson')?.addEventListener('click', downloadJSON);
 
     // Search and Regex Filter
     const searchInput = document.getElementById('processSearch');
@@ -3714,6 +3855,9 @@ if GUI_AVAILABLE:
             self.btn_export_html = QPushButton("💾 Export HTML")
             self.btn_export_html.clicked.connect(lambda: self.export_html())
 
+            self.btn_export_csv = QPushButton("📊 Export CSV")
+            self.btn_export_csv.clicked.connect(self.export_csv)
+
             # Theme Selector Dropdown
             self.theme_combo = QComboBox()
             for t_name in THEMES.keys():
@@ -3729,6 +3873,7 @@ if GUI_AVAILABLE:
             tb_layout.addWidget(self.chk_regex)
             tb_layout.addWidget(self.btn_open_browser)
             tb_layout.addWidget(self.btn_export_html)
+            tb_layout.addWidget(self.btn_export_csv)
             tb_layout.addWidget(QLabel("Theme:"))
             tb_layout.addWidget(self.theme_combo)
             right_layout.addLayout(tb_layout)
@@ -4217,6 +4362,23 @@ if GUI_AVAILABLE:
                 theme_name=self.current_theme
             )
             self.statusBar().showMessage(f"Report exported to {file_path}")
+
+        def export_csv(self, file_path: Optional[str] = None):
+            """Export current telemetry data to a CSV file."""
+            if not self.current_parsed:
+                QMessageBox.warning(self, "No Data", "Please load a log file first.")
+                return
+
+            if not file_path or not isinstance(file_path, str):
+                default_name = f"{self.current_job.label}_telemetry.csv" if self.current_job else "telemetry.csv"
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "Export Telemetry CSV", default_name, "CSV Files (*.csv)"
+                )
+                if not file_path:
+                    return
+
+            self.current_parsed.to_csv(file_path)
+            self.statusBar().showMessage(f"Telemetry exported to {file_path}")
 
 
 def main():
