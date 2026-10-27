@@ -815,6 +815,62 @@ class PlotlyHtmlGenerator:
 
         tbody_html = "\n".join(table_rows)
 
+        # Build /proc/meminfo Collapsible Panel
+        meminfo_stats: Dict[str, List[float]] = {}
+        for s in self.data.snapshots:
+            for k, v in s.meminfo.items():
+                meminfo_stats.setdefault(k, []).append(v)
+
+        if meminfo_stats:
+            meminfo_rows = []
+            for k in sorted(meminfo_stats.keys()):
+                vals = meminfo_stats[k]
+                latest = vals[-1]
+                min_val = min(vals)
+                max_val = max(vals)
+                metric_name = k
+                if metric_name.startswith("meminfo_"):
+                    metric_name = metric_name[len("meminfo_"):]
+                if metric_name.endswith("_mb"):
+                    metric_name = metric_name[:-3]
+                esc_metric = html.escape(metric_name)
+                meminfo_rows.append(
+                    f'<tr>'
+                    f'<td><strong>{esc_metric}</strong></td>'
+                    f'<td class="num-cell highlight-mem">{latest:.2f} MB</td>'
+                    f'<td class="num-cell">{min_val:.2f} MB</td>'
+                    f'<td class="num-cell">{max_val:.2f} MB</td>'
+                    f'</tr>'
+                )
+            meminfo_tbody = "\n".join(meminfo_rows)
+            meminfo_panel_html = (
+                f'<details id="meminfoPanel" class="meminfo-panel">\n'
+                f'      <summary><strong>/proc/meminfo Details</strong> ({len(meminfo_stats)} metrics)</summary>\n'
+                f'      <div class="meminfo-table-scroll">\n'
+                f'        <table class="telemetry-table" id="meminfoTable">\n'
+                f'          <thead>\n'
+                f'            <tr>\n'
+                f'              <th>Metric</th>\n'
+                f'              <th style="text-align: right;">Latest (MB)</th>\n'
+                f'              <th style="text-align: right;">Min (MB)</th>\n'
+                f'              <th style="text-align: right;">Max (MB)</th>\n'
+                f'            </tr>\n'
+                f'          </thead>\n'
+                f'          <tbody>\n'
+                f'            {meminfo_tbody}\n'
+                f'          </tbody>\n'
+                f'        </table>\n'
+                f'      </div>\n'
+                f'    </details>'
+            )
+        else:
+            meminfo_panel_html = (
+                '<details id="meminfoPanel" class="meminfo-panel" style="display: none;">\n'
+                '      <summary><strong>/proc/meminfo Details</strong></summary>\n'
+                '      <p style="color: var(--fg-muted); padding: 8px 0;">No /proc/meminfo data available</p>\n'
+                '    </details>'
+            )
+
         # Build Theme Options
         theme_options = []
         for t_key in THEMES.keys():
@@ -1171,6 +1227,32 @@ class PlotlyHtmlGenerator:
       fill: var(--bg-card) !important;
       stroke: var(--border) !important;
     }}
+    .meminfo-panel {{
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 16px;
+      padding: 12px 16px;
+    }}
+    .meminfo-panel summary {{
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--fg-text);
+      outline: none;
+      user-select: none;
+      padding: 4px 0;
+    }}
+    .meminfo-panel summary:hover {{
+      color: var(--accent-cpu);
+    }}
+    .meminfo-table-scroll {{
+      max-height: 360px;
+      overflow-y: auto;
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }}
   </style>
 </head>
 <body data-theme="{theme_name}">
@@ -1259,6 +1341,8 @@ class PlotlyHtmlGenerator:
         <span>Click any column header to sort</span>
       </div>
     </div>
+
+    {meminfo_panel_html}
   </div>
 
   <script>
@@ -2030,6 +2114,32 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       fill: var(--bg-card) !important;
       stroke: var(--border) !important;
     }
+    .meminfo-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 16px;
+      padding: 12px 16px;
+    }
+    .meminfo-panel summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--fg-text);
+      outline: none;
+      user-select: none;
+      padding: 4px 0;
+    }
+    .meminfo-panel summary:hover {
+      color: var(--accent-cpu);
+    }
+    .meminfo-table-scroll {
+      max-height: 360px;
+      overflow-y: auto;
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
 
     /* Loading Spinner Overlay */
     .loading-overlay {
@@ -2212,6 +2322,23 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           <span>Click any column header to sort</span>
         </div>
       </div>
+
+      <details id="meminfoPanel" class="meminfo-panel" style="display: none;">
+        <summary><strong>/proc/meminfo Details</strong></summary>
+        <div class="meminfo-table-scroll">
+          <table class="telemetry-table" id="meminfoTable">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th style="text-align: right;">Latest (MB)</th>
+                <th style="text-align: right;">Min (MB)</th>
+                <th style="text-align: right;">Max (MB)</th>
+              </tr>
+            </thead>
+            <tbody id="meminfoTableBody"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -2262,12 +2389,15 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         "%iow": []
       };
       const pidData = {};
+      const meminfo = {};
+      const snapshots = [];
 
       let currentTs = null;
       let currentCpu = 0.0;
       let currentMem = 0.0;
       let currentSwap = 0.0;
       let currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
+      let currentMeminfo = {};
       let currentPidsInSnapshot = {};
       let inProcTable = false;
 
@@ -2275,6 +2405,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       const memRegex = /Mem:\\s+(\\d+[KkMmGg]?)\\s+total,\\s+(\\d+[KkMmGg]?)\\s+used/i;
       const swapRegex = /Swap:\\s+(\\d+[KkMmGg]?)\\s+total,\\s+(\\d+[KkMmGg]?)\\s+used/i;
       const cpuRegex = /(\\d+)%cpu\\s+(\\d+)%user\\s+(\\d+)%nice\\s+(\\d+)%sys\\s+(\\d+)%idle(?:\\s+(\\d+)%iow)?(?:\\s+(\\d+)%irq)?(?:\\s+(\\d+)%sirq)?/i;
+      const meminfoRegex = /^([A-Za-z0-9_()]+):\\s+(\\d+)\\s+kB/;
       const procRegex = /^\\s*(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+([RSDZTtWw])\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\S+)\\s+(.+)$/;
 
       for (let i = 0; i < lines.length; i++) {
@@ -2302,12 +2433,22 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
                 pidData[pid].mem_pct.push(0.0);
               }
             }
+            for (const k in currentMeminfo) {
+              if (!meminfo[k]) {
+                meminfo[k] = new Array(timestamps.length - 1).fill(null);
+              }
+            }
+            for (const k in meminfo) {
+              meminfo[k].push(k in currentMeminfo ? currentMeminfo[k] : null);
+            }
+            snapshots.push({ timestamp: currentTs, meminfo: Object.assign({}, currentMeminfo) });
           }
           currentTs = tsMatch[1];
           currentCpu = 0.0;
           currentMem = 0.0;
           currentSwap = 0.0;
           currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
+          currentMeminfo = {};
           currentPidsInSnapshot = {};
           inProcTable = false;
           continue;
@@ -2346,6 +2487,14 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
             "%sirq": sirq,
             "%iow": iow
           };
+          continue;
+        }
+
+        const meminfoMatch = line.match(meminfoRegex);
+        if (meminfoMatch) {
+          const mKey = meminfoMatch[1];
+          const kbVal = parseFloat(meminfoMatch[2]);
+          currentMeminfo[mKey] = kbVal / 1024.0;
           continue;
         }
 
@@ -2415,6 +2564,15 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
             pidData[pid].mem_pct.push(0.0);
           }
         }
+        for (const k in currentMeminfo) {
+          if (!meminfo[k]) {
+            meminfo[k] = new Array(timestamps.length - 1).fill(null);
+          }
+        }
+        for (const k in meminfo) {
+          meminfo[k].push(k in currentMeminfo ? currentMeminfo[k] : null);
+        }
+        snapshots.push({ timestamp: currentTs, meminfo: Object.assign({}, currentMeminfo) });
       }
 
       const allPids = Object.keys(pidData).map(p => parseInt(p, 10));
@@ -2426,6 +2584,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         timestamps: timestamps,
         systemMetrics: systemMetrics,
         pidData: pidData,
+        meminfo: meminfo,
+        snapshots: snapshots,
         allPids: sortedByCpu,
         topCpuPids: sortedByCpu.slice(0, 5),
         topMemPids: sortedByMem.slice(0, 5)
@@ -2681,6 +2841,45 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
 
       document.getElementById('rowCountLabel').textContent = `Showing ${session.allPids.length} of ${session.allPids.length} processes`;
       bindTableEvents();
+      buildMeminfoPanel(session);
+    }
+
+    function buildMeminfoPanel(session) {
+      const panel = document.getElementById('meminfoPanel');
+      const tbody = document.getElementById('meminfoTableBody');
+      if (!panel || !tbody) return;
+
+      tbody.innerHTML = '';
+      if (!session || !session.meminfo || Object.keys(session.meminfo).length === 0) {
+        panel.style.display = 'none';
+        return;
+      }
+
+      const keys = Object.keys(session.meminfo).sort();
+      let hasData = false;
+
+      keys.forEach(k => {
+        const rawVals = session.meminfo[k];
+        const vals = (rawVals || []).filter(v => v !== null && v !== undefined && !isNaN(v));
+        if (vals.length === 0) return;
+        hasData = true;
+
+        const latest = vals[vals.length - 1];
+        const minVal = Math.min(...vals);
+        const maxVal = Math.max(...vals);
+
+        const metricName = k.replace(/^meminfo_/, '').replace(/_mb$/, '');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>${metricName}</strong></td>
+          <td class="num-cell highlight-mem">${latest.toFixed(2)} MB</td>
+          <td class="num-cell">${minVal.toFixed(2)} MB</td>
+          <td class="num-cell">${maxVal.toFixed(2)} MB</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      panel.style.display = hasData ? 'block' : 'none';
     }
 
     function toggleTrace(pid, visible) {
@@ -2825,7 +3024,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         rows.push(row.join(","));
       }
 
-      const csvContent = rows.join("\n");
+      const csvContent = rows.join("\\n");
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -3135,6 +3334,24 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
 
       merged.allPids = Array.from(new Set(merged.allPids));
       merged.topMemPids = [...merged.allPids].sort((a, b) => (merged.pidData[b].max_res_mb || 0) - (merged.pidData[a].max_res_mb || 0));
+
+      // Merge meminfo
+      merged.meminfo = merged.meminfo || {};
+      if (topmenParsed.meminfo) {
+        for (const k in topmenParsed.meminfo) {
+          merged.meminfo[k] = topmenParsed.meminfo[k];
+        }
+      }
+      if (topmenParsed.snapshots && merged.snapshots) {
+        for (let i = 0; i < merged.snapshots.length; i++) {
+          if (topmenParsed.snapshots[i] && topmenParsed.snapshots[i].meminfo) {
+            merged.snapshots[i].meminfo = Object.assign(
+              merged.snapshots[i].meminfo || {},
+              topmenParsed.snapshots[i].meminfo
+            );
+          }
+        }
+      }
 
       return merged;
     }

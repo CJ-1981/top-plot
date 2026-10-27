@@ -1215,6 +1215,122 @@ def test_standalone_html_has_png_export_button():
     os.unlink(out)
 
 
+def test_standalone_html_has_meminfo_panel():
+    """Verify standalone HTML contains /proc/meminfo panel."""
+    import top_plot_v2 as tp
+    import tempfile, os
+    out = os.path.join(tempfile.gettempdir(), "test_meminfo.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "meminfoPanel" in content or "meminfo-panel" in content, "Missing meminfo panel"
+    assert "buildMeminfoPanel" in content, "Missing buildMeminfoPanel function"
+    os.unlink(out)
+
+
+def test_generate_html_has_meminfo_panel():
+    """Verify generate_html contains /proc/meminfo panel when meminfo exists."""
+    import top_plot_v2 as tp
+    import os
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    sample_topmen_1 = os.path.join(samples_dir, "log_topmen@20260917_17-33-01-008-Batch_3.log")
+    parser = tp.LogParserV2()
+    parsed = parser.parse_file(sample_topmen_1, encoding="utf-8")
+    assert parsed is not None
+    generator = tp.PlotlyHtmlGenerator(parsed)
+    html_content = generator.generate_html()
+    assert "meminfoPanel" in html_content or "meminfo-panel" in html_content, "Missing meminfo panel in generate_html"
+    assert "MemAvailable" in html_content, "Missing MemAvailable metric in meminfo panel"
+
+
+def test_standalone_js_meminfo_parsing_and_merging():
+    """Verify that standalone JS correctly parses /proc/meminfo and merges it."""
+    import top_plot_v2 as tp
+    import pytest
+    import tempfile, os, subprocess, json, shutil
+
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for JS parser test")
+
+    out = os.path.join(tempfile.gettempdir(), "test_js_meminfo.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
+
+    mock_prefix = """
+global.document = {
+    getElementById: () => ({ style: {}, querySelector: () => null, querySelectorAll: () => [], appendChild: () => {}, addEventListener: () => {} }),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: { getAttribute: () => 'Dark Fusion' }
+};
+global.window = {
+    addEventListener: () => {}
+};
+global.FileReader = class {};
+"""
+
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
+
+    test_harness = """
+const testLines = [
+  "20260917_17-33-01",
+  "MemTotal:        7594756 kB",
+  "MemFree:         1367888 kB",
+  "MemAvailable:    3766552 kB",
+  "Buffers:           15396 kB",
+  "Cached:          2436920 kB",
+  "  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers",
+  "800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 maps",
+  "",
+  "20260917_17-33-11",
+  "MemTotal:        7594756 kB",
+  "MemFree:         1200000 kB",
+  "MemAvailable:    3500000 kB",
+  "Buffers:           16000 kB",
+  "Cached:          2500000 kB",
+  "  Mem:  7594756K total,  6340152K used,  1254604K free,    15396K buffers",
+  "800%cpu  97%user 144%nice 103%sys 322%idle  25%iow  16%irq   3%sirq  91%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 566M 328M S 62.5   7.6  11:12.68 maps"
+].join("\\n");
+
+const parsed = parseTopLog(testLines, "test_session");
+const merged = mergeTopAndTopmen(parsed, parsed, "merged_session");
+console.log(JSON.stringify({
+    hasMeminfo: !!parsed.meminfo,
+    memKeys: Object.keys(parsed.meminfo),
+    memAvailable: parsed.meminfo["MemAvailable"],
+    mergedMemAvailable: merged.meminfo["MemAvailable"],
+    snapshotsCount: parsed.snapshots ? parsed.snapshots.length : 0
+}));
+"""
+
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_meminfo.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
+
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert res["hasMeminfo"]
+        assert "MemAvailable" in res["memKeys"]
+        assert len(res["memAvailable"]) == 2
+        assert abs(res["memAvailable"][0] - (3766552 / 1024.0)) < 0.01
+        assert abs(res["mergedMemAvailable"][0] - (3766552 / 1024.0)) < 0.01
+        assert res["snapshotsCount"] == 2
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)
+
+
+
 
 
 
