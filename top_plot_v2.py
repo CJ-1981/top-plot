@@ -2587,6 +2587,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           <button type="button" class="btn" id="btnDownloadCsv">📊 Download CSV</button>
           <button type="button" class="btn" id="btnDownloadJson">📋 Download JSON</button>
           <button type="button" class="btn" id="btnExportPng">📸 Save PNG</button>
+          <button type="button" class="btn" id="btnAddMarker">📌 Add Marker</button>
+          <button type="button" class="btn" id="btnClearMarkers" style="display:none;">🗑️ Clear Markers</button>
         </div>
       </div>
 
@@ -2669,6 +2671,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
     let activeSessionKey = null;
     let pidTraceMap = {};
     let sysTraceMap = {};
+    let markerMode = false;
+    const annotations = [];
 
     function hexToRgba(hex, alpha) {
       if (!hex) return `rgba(16, 185, 129, ${alpha})`;
@@ -3095,6 +3099,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           font: { color: theme.fg_text, size: 11, family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }
         },
         margin: { l: 45, r: 45, t: 50, b: 40 },
+        annotations: annotations,
         legend: {
           orientation: "h",
           yanchor: "bottom",
@@ -3135,6 +3140,45 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       };
 
       Plotly.newPlot("telemetry_plot", traces, layout, { responsive: true });
+
+      // Reset marker mode state on session render
+      markerMode = false;
+      const btnAddMarkerInit = document.getElementById('btnAddMarker');
+      if (btnAddMarkerInit) {
+        btnAddMarkerInit.classList.remove('btn-accent');
+        btnAddMarkerInit.textContent = '📌 Add Marker';
+      }
+      const btnClearMarkersInit = document.getElementById('btnClearMarkers');
+      if (btnClearMarkersInit) {
+        btnClearMarkersInit.style.display = annotations.length > 0 ? 'inline-flex' : 'none';
+      }
+
+      const plotDiv = document.getElementById("telemetry_plot");
+      if (plotDiv) {
+        if (plotDiv.style) plotDiv.style.cursor = '';
+        if (plotDiv.removeAllListeners) {
+          plotDiv.removeAllListeners('plotly_click');
+        }
+        if (plotDiv.on) {
+          plotDiv.on('plotly_click', function(data) {
+            if (!markerMode) return;
+            if (data && data.points && data.points.length > 0) {
+              const xVal = data.points[0].x;
+              const note = window.prompt("Annotation text:", "");
+              if (note && note.trim()) {
+                addAnnotation(xVal, note.trim());
+              }
+              markerMode = false;
+              const btnMarker = document.getElementById('btnAddMarker');
+              if (btnMarker) {
+                btnMarker.classList.remove('btn-accent');
+                btnMarker.textContent = '📌 Add Marker';
+              }
+              if (plotDiv.style) plotDiv.style.cursor = '';
+            }
+          });
+        }
+      }
 
       // Populate Table
       const tbody = document.getElementById("processTableBody");
@@ -3412,6 +3456,76 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
     document.getElementById('btnDownloadJson')?.addEventListener('click', downloadJSON);
     document.getElementById('btnExportPng')?.addEventListener('click', downloadPNG);
 
+    // Annotation / Marker System
+    function addAnnotation(x, text) {
+      const currentTheme = document.body.getAttribute('data-theme') || 'Dark Fusion';
+      const t = THEMES[currentTheme] || THEMES['Dark Fusion'];
+      const plotDiv = document.getElementById('telemetry_plot');
+
+      const ann = {
+        x: x,
+        y: 1,
+        xref: 'x',
+        yref: 'paper',
+        text: text,
+        showarrow: true,
+        arrowhead: 2,
+        arrowsize: 1,
+        arrowwidth: 1.5,
+        arrowcolor: t.accent_cpu,
+        ax: 0,
+        ay: -40,
+        bgcolor: t.bg_card,
+        bordercolor: t.accent_cpu,
+        borderwidth: 1,
+        borderpad: 4,
+        font: {
+          color: t.fg_text,
+          size: 11,
+          family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        }
+      };
+
+      annotations.push(ann);
+
+      if (plotDiv && typeof Plotly !== 'undefined') {
+        Plotly.relayout(plotDiv, { annotations: annotations });
+      }
+
+      const btnClear = document.getElementById('btnClearMarkers');
+      if (btnClear) {
+        btnClear.style.display = 'inline-flex';
+      }
+    }
+
+    window.addAnnotation = addAnnotation;
+    window.annotations = annotations;
+
+    const btnAddMarker = document.getElementById('btnAddMarker');
+    btnAddMarker?.addEventListener('click', () => {
+      markerMode = !markerMode;
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (markerMode) {
+        btnAddMarker.classList.add('btn-accent');
+        btnAddMarker.textContent = '📌 Click Chart...';
+        if (plotDiv && plotDiv.style) plotDiv.style.cursor = 'crosshair';
+      } else {
+        btnAddMarker.classList.remove('btn-accent');
+        btnAddMarker.textContent = '📌 Add Marker';
+        if (plotDiv && plotDiv.style) plotDiv.style.cursor = '';
+      }
+    });
+
+    const btnClearMarkers = document.getElementById('btnClearMarkers');
+    btnClearMarkers?.addEventListener('click', () => {
+      annotations.length = 0;
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined') {
+        Plotly.relayout(plotDiv, { annotations: [] });
+      }
+      btnClearMarkers.style.display = 'none';
+    });
+
     // Search and Regex Filter
     const searchInput = document.getElementById('processSearch');
     const chkRegex = document.getElementById('chkHtmlRegex');
@@ -3550,6 +3664,13 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           bordercolor: t.border,
           font: { color: t.fg_text, size: 11, family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }
         },
+        annotations: (annotations || []).map(ann => {
+          ann.bgcolor = t.bg_card;
+          ann.bordercolor = t.accent_cpu;
+          ann.arrowcolor = t.accent_cpu;
+          if (ann.font) ann.font.color = t.fg_text;
+          return ann;
+        }),
         legend: {
           ...plotDiv.layout.legend,
           bgcolor: t.bg_card,

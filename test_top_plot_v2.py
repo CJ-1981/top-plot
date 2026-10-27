@@ -1317,7 +1317,7 @@ console.log(JSON.stringify({
         f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
 
     try:
-        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, check=True)
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
         res = json.loads(proc.stdout.strip().split("\n")[-1])
         assert res["hasMeminfo"]
         assert "MemAvailable" in res["memKeys"]
@@ -1454,7 +1454,7 @@ console.log(JSON.stringify({
         f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
 
     try:
-        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, check=True)
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
         res = json.loads(proc.stdout.strip().split("\n")[-1])
         assert "4146" in res["titleText"]
         assert "maps" in res["titleText"]
@@ -1627,7 +1627,7 @@ console.log(JSON.stringify({
         f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
 
     try:
-        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, check=True)
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
         res = json.loads(proc.stdout.strip().split("\n")[-1])
         assert res["initialSlider"] is not None
         assert res["initialSlider"]["visible"] is True
@@ -1643,6 +1643,251 @@ console.log(JSON.stringify({
     finally:
         if os.path.exists(temp_js):
             os.unlink(temp_js)
+
+
+def test_standalone_html_has_annotation_support():
+    """Verify standalone HTML contains annotation/marker system."""
+    import top_plot_v2 as tp
+    import tempfile, os
+    out = os.path.join(tempfile.gettempdir(), "test_annotations.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "addAnnotation" in content, "Missing addAnnotation function"
+    assert "btnAddMarker" in content or "markerMode" in content, "Missing marker mode UI"
+    os.unlink(out)
+
+
+def test_standalone_js_annotation_markers_execution():
+    """Verify standalone JS markerMode toggle, prompt on click, addAnnotation, relayout, theme recoloring, and clear."""
+    import top_plot_v2 as tp
+    import pytest
+    import tempfile, os, subprocess, json, shutil
+
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for JS annotation test")
+
+    out = os.path.join(tempfile.gettempdir(), "test_js_annotations.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
+
+    mock_prefix = """
+global.lastPlotCall = null;
+global.lastReactCall = null;
+global.lastRelayoutCall = null;
+
+const createMockElem = (initialClasses = []) => {
+    const classes = new Set(initialClasses);
+    const listeners = {};
+    return {
+        style: {},
+        checked: true,
+        textContent: '',
+        innerHTML: '',
+        classList: {
+            toggle: (c, val) => {
+                if (val === undefined) {
+                    if (classes.has(c)) classes.delete(c); else classes.add(c);
+                } else if (val) {
+                    classes.add(c);
+                } else {
+                    classes.delete(c);
+                }
+            },
+            add: (c) => classes.add(c),
+            remove: (c) => classes.delete(c),
+            contains: (c) => classes.has(c)
+        },
+        getAttribute: (k) => '',
+        setAttribute: (k, v) => {},
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        appendChild: () => {},
+        addEventListener: (event, handler) => {
+            listeners[event] = listeners[event] || [];
+            listeners[event].push(handler);
+        },
+        _trigger: (event, e = {}) => {
+            if (listeners[event]) listeners[event].forEach(fn => fn(e));
+        }
+    };
+};
+
+const plotDivEvents = {};
+const elements = {
+    currentSessionTitle: createMockElem(),
+    snapshotBadge: createMockElem(),
+    processBadge: createMockElem(),
+    telemetryView: createMockElem(),
+    telemetry_plot: {
+        data: [],
+        layout: {},
+        style: {},
+        on: (ev, fn) => {
+            plotDivEvents[ev] = plotDivEvents[ev] || [];
+            plotDivEvents[ev].push(fn);
+        },
+        removeAllListeners: (ev) => {
+            if (ev) delete plotDivEvents[ev];
+        },
+        _emit: (ev, data) => {
+            if (plotDivEvents[ev]) plotDivEvents[ev].forEach(fn => fn(data));
+        }
+    },
+    chkSysMem: createMockElem(),
+    chkSysCpu: createMockElem(),
+    chkSysSwap: createMockElem(),
+    chkCpuBreakdown: createMockElem(),
+    processTableBody: createMockElem(),
+    tableRowCount: createMockElem(),
+    thMasterCheck: createMockElem(),
+    btnAddMarker: createMockElem(),
+    btnClearMarkers: createMockElem()
+};
+
+global.Plotly = {
+    newPlot: (divId, traces, layout, opts) => {
+        const div = elements[divId] || elements.telemetry_plot;
+        div.data = traces;
+        div.layout = layout;
+        global.lastPlotCall = { divId, traces, layout };
+    },
+    react: (div, traces, layout) => {
+        div.data = traces;
+        div.layout = layout;
+        global.lastReactCall = { div, traces, layout };
+    },
+    relayout: (div, update) => {
+        div.layout = Object.assign({}, div.layout, update);
+        global.lastRelayoutCall = { div, update };
+    }
+};
+
+global.document = {
+    createElement: () => createMockElem(),
+    getElementById: (id) => elements[id] || createMockElem(),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: {
+        getAttribute: () => global._currTheme || 'Dark Fusion',
+        setAttribute: (k, v) => { global._currTheme = v; }
+    }
+};
+
+global._promptResponse = "High CPU Peak";
+global.window = {
+    addEventListener: () => {},
+    prompt: (msg, def) => global._promptResponse
+};
+global.FileReader = class {};
+"""
+
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
+
+    test_harness = """
+const testLog = [
+  "20260917_17-33-01",
+  "800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps"
+].join("\\n");
+
+const parsed = parseTopLog(testLog, "demo_session");
+loadedSessions["demo_session"] = parsed;
+renderSession("demo_session");
+
+// Initial state checks
+const initialBtnText = elements.btnAddMarker.textContent;
+const initialClearDisplay = elements.btnClearMarkers.style.display;
+
+// 1. Click Add Marker to enter marker mode
+elements.btnAddMarker._trigger('click');
+const activeBtnText = elements.btnAddMarker.textContent;
+const activeHasAccent = elements.btnAddMarker.classList.contains('btn-accent');
+const plotCursorActive = elements.telemetry_plot.style.cursor;
+
+// 2. Simulate plotly_click on the chart
+elements.telemetry_plot._emit('plotly_click', {
+    points: [{ x: "20260917_17-33-01", y: 93.1 }]
+});
+
+const postClickBtnText = elements.btnAddMarker.textContent;
+const postClickHasAccent = elements.btnAddMarker.classList.contains('btn-accent');
+const postClickCursor = elements.telemetry_plot.style.cursor;
+const clearBtnDisplayAfterAdd = elements.btnClearMarkers.style.display;
+const addedAnnotations = global.lastRelayoutCall ? JSON.parse(JSON.stringify(global.lastRelayoutCall.update.annotations)) : [];
+
+// 3. Switch theme to Light Mode and verify annotation recoloring
+applyThemeToPlot("Light Mode");
+const lightAnnotations = global.lastReactCall ? JSON.parse(JSON.stringify(global.lastReactCall.layout.annotations)) : [];
+
+// 4. Clear markers
+elements.btnClearMarkers._trigger('click');
+const clearedAnnotations = global.lastRelayoutCall ? global.lastRelayoutCall.update.annotations : null;
+const clearBtnDisplayAfterClear = elements.btnClearMarkers.style.display;
+
+console.log(JSON.stringify({
+    initialBtnText,
+    initialClearDisplay,
+    activeBtnText,
+    activeHasAccent,
+    plotCursorActive,
+    postClickBtnText,
+    postClickHasAccent,
+    postClickCursor,
+    clearBtnDisplayAfterAdd,
+    addedAnnotations,
+    lightAnnotations,
+    clearedAnnotations,
+    clearBtnDisplayAfterClear
+}));
+"""
+
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_annotations.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
+
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert res["initialBtnText"] == "📌 Add Marker"
+        assert res["initialClearDisplay"] == "none"
+
+        assert res["activeBtnText"] == "📌 Click Chart..."
+        assert res["activeHasAccent"] is True
+        assert res["plotCursorActive"] == "crosshair"
+
+        assert res["postClickBtnText"] == "📌 Add Marker"
+        assert res["postClickHasAccent"] is False
+        assert res["postClickCursor"] == ""
+        assert res["clearBtnDisplayAfterAdd"] == "inline-flex"
+
+        assert len(res["addedAnnotations"]) == 1
+        ann = res["addedAnnotations"][0]
+        assert ann["x"] == "20260917_17-33-01"
+        assert ann["text"] == "High CPU Peak"
+        assert ann["bgcolor"] == "#1f2937"
+        assert ann["bordercolor"] == "#10b981"
+        assert ann["font"]["color"] == "#f3f4f6"
+
+        assert len(res["lightAnnotations"]) == 1
+        l_ann = res["lightAnnotations"][0]
+        assert l_ann["bgcolor"] == "#ffffff"
+        assert l_ann["bordercolor"] == "#059669"
+        assert l_ann["font"]["color"] == "#0f172a"
+
+        assert res["clearedAnnotations"] == []
+        assert res["clearBtnDisplayAfterClear"] == "none"
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)
+
+
 
 
 
