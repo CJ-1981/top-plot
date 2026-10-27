@@ -788,7 +788,12 @@ def test_standalone_html_themes_recolor_e2e():
                 return {
                     trace0_color: plotDiv.data[0].line.color,
                     trace1_color: plotDiv.data[1].line.color,
-                    trace2_color: plotDiv.data[2].line.color,
+                    trace2_color: (function() {
+                    const session = (typeof loadedSessions !== \'undefined\' && typeof activeSessionKey !== \'undefined\') ? loadedSessions[activeSessionKey] : null;
+                    const firstPid = (session && session.allPids && session.allPids.length > 0) ? session.allPids[0] : (Object.keys(pidTraceMap)[0]);
+                    const idx = (firstPid !== null && pidTraceMap[firstPid]) ? pidTraceMap[firstPid][0] : 2;
+                    return plotDiv.data[idx].line.color;
+                })(),
                     hoverBg: bgPath ? window.getComputedStyle(bgPath).fill : null,
                     legendFill: legendTexts.length ? window.getComputedStyle(legendTexts[0]).fill : null
                 };
