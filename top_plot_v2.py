@@ -487,6 +487,7 @@ class PlotlyHtmlGenerator:
         plot_sys_cpu: bool = True,
         plot_sys_mem: bool = True,
         plot_cpu_breakdown: bool = False,
+        plot_sys_swap: bool = False,
         theme_name: str = "Dark Fusion",
         include_all_processes: bool = True
     ):
@@ -572,6 +573,23 @@ class PlotlyHtmlGenerator:
                 secondary_y=True
             )
             sys_traces["sys_mem"] = trace_idx
+            trace_idx += 1
+
+        # System Swap Used (MB)
+        if (plot_sys_swap or include_all_processes) and "swap_used_mb" in self.data.system_metrics:
+            swap_color = "#f43f5e"  # rose-500
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=self.data.system_metrics["swap_used_mb"],
+                    name="System Swap Used (MB)",
+                    mode="lines",
+                    line=dict(color=swap_color, width=1.5, dash="dashdot"),
+                    visible=bool(plot_sys_swap)
+                ),
+                secondary_y=True
+            )
+            sys_traces["sys_swap"] = trace_idx
             trace_idx += 1
 
         # 3. Process Traces (CPU on Left Y, RES Memory on Right Y)
@@ -682,6 +700,7 @@ class PlotlyHtmlGenerator:
         plot_sys_cpu: bool = True,
         plot_sys_mem: bool = True,
         plot_cpu_breakdown: bool = False,
+        plot_sys_swap: bool = False,
         theme_name: str = "Dark Fusion",
         include_plotlyjs: bool = True
     ) -> str:
@@ -694,6 +713,7 @@ class PlotlyHtmlGenerator:
             plot_sys_cpu=plot_sys_cpu,
             plot_sys_mem=plot_sys_mem,
             plot_cpu_breakdown=plot_cpu_breakdown,
+            plot_sys_swap=plot_sys_swap,
             theme_name=theme_name,
             include_all_processes=True
         )
@@ -791,6 +811,7 @@ class PlotlyHtmlGenerator:
         chk_sys_cpu_attr = "checked" if plot_sys_cpu else ""
         chk_sys_mem_attr = "checked" if plot_sys_mem else ""
         chk_cpu_breakdown_attr = "checked" if plot_cpu_breakdown else ""
+        chk_sys_swap_attr = "checked" if plot_sys_swap else ""
 
         html_template = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1117,6 +1138,10 @@ class PlotlyHtmlGenerator:
           <input type="checkbox" id="chkCpuBreakdown" {chk_cpu_breakdown_attr} />
           <span>CPU Breakdown</span>
         </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="chkSysSwap" {chk_sys_swap_attr} />
+          <span>System Swap MB</span>
+        </label>
         <label class="toggle-label" style="margin-left: 8px;">
           <span>Theme:</span>
           <select id="htmlThemeSelect" class="theme-select">
@@ -1262,6 +1287,16 @@ class PlotlyHtmlGenerator:
           const plotDiv = getPlotDiv();
           if (plotDiv && typeof Plotly !== 'undefined') {{
             Plotly.restyle(plotDiv, {{ visible: e.target.checked ? true : false }}, bdIndices);
+          }}
+        }});
+      }}
+
+      const chkSysSwap = document.getElementById('chkSysSwap');
+      if (chkSysSwap && sysTraceMap.sys_swap !== undefined) {{
+        chkSysSwap.addEventListener('change', function(e) {{
+          const plotDiv = getPlotDiv();
+          if (plotDiv && typeof Plotly !== 'undefined') {{
+            Plotly.restyle(plotDiv, {{ visible: e.target.checked ? true : false }}, [sysTraceMap.sys_swap]);
           }}
         }});
       }}
@@ -1509,6 +1544,7 @@ class PlotlyHtmlGenerator:
         plot_sys_cpu: bool = True,
         plot_sys_mem: bool = True,
         plot_cpu_breakdown: bool = False,
+        plot_sys_swap: bool = False,
         theme_name: str = "Dark Fusion",
         include_plotlyjs: bool = True
     ) -> str:
@@ -1518,6 +1554,7 @@ class PlotlyHtmlGenerator:
             plot_sys_cpu=plot_sys_cpu,
             plot_sys_mem=plot_sys_mem,
             plot_cpu_breakdown=plot_cpu_breakdown,
+            plot_sys_swap=plot_sys_swap,
             theme_name=theme_name,
             include_plotlyjs=include_plotlyjs
         )
@@ -1988,6 +2025,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           <label class="toggle-label"><input type="checkbox" id="chkSysCpu" checked /> <span>System CPU%</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkSysMem" checked /> <span>System RAM MB</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkCpuBreakdown" /> <span>CPU Breakdown</span></label>
+          <label class="toggle-label"><input type="checkbox" id="chkSysSwap" /> <span>System Swap MB</span></label>
         </div>
       </div>
 
@@ -2081,6 +2119,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       const systemMetrics = {
         "%cpu_total": [],
         "mem_used_mb": [],
+        "swap_used_mb": [],
         "%user": [],
         "%sys": [],
         "%nice": [],
@@ -2093,12 +2132,14 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       let currentTs = null;
       let currentCpu = 0.0;
       let currentMem = 0.0;
+      let currentSwap = 0.0;
       let currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
       let currentPidsInSnapshot = {};
       let inProcTable = false;
 
       const tsRegex = /^(\\d{8}[_-]\\d{2}[-:]\\d{2}[-:]\\d{2}|\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}|\\d{8}_\\d{6})/;
       const memRegex = /Mem:\\s+(\\d+[KkMmGg]?)\\s+total,\\s+(\\d+[KkMmGg]?)\\s+used/i;
+      const swapRegex = /Swap:\\s+(\\d+[KkMmGg]?)\\s+total,\\s+(\\d+[KkMmGg]?)\\s+used/i;
       const cpuRegex = /(\\d+)%cpu\\s+(\\d+)%user\\s+(\\d+)%nice\\s+(\\d+)%sys\\s+(\\d+)%idle(?:\\s+(\\d+)%iow)?(?:\\s+(\\d+)%irq)?(?:\\s+(\\d+)%sirq)?/i;
       const procRegex = /^\\s*(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+([RSDZTtWw])\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\S+)\\s+(.+)$/;
 
@@ -2110,6 +2151,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
             timestamps.push(currentTs);
             systemMetrics["%cpu_total"].push(currentCpu);
             systemMetrics["mem_used_mb"].push(currentMem);
+            systemMetrics["swap_used_mb"].push(currentSwap);
             systemMetrics["%user"].push(currentCpuBreakdown["%user"]);
             systemMetrics["%sys"].push(currentCpuBreakdown["%sys"]);
             systemMetrics["%nice"].push(currentCpuBreakdown["%nice"]);
@@ -2128,6 +2170,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           currentTs = tsMatch[1];
           currentCpu = 0.0;
           currentMem = 0.0;
+          currentSwap = 0.0;
           currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
           currentPidsInSnapshot = {};
           inProcTable = false;
@@ -2139,6 +2182,12 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         const memMatch = line.match(memRegex);
         if (memMatch) {
           currentMem = parseMemoryMb(memMatch[2]);
+          continue;
+        }
+
+        const swapMatch = line.match(swapRegex);
+        if (swapMatch) {
+          currentSwap = parseMemoryMb(swapMatch[2]);
           continue;
         }
 
@@ -2208,6 +2257,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         timestamps.push(currentTs);
         systemMetrics["%cpu_total"].push(currentCpu);
         systemMetrics["mem_used_mb"].push(currentMem);
+        systemMetrics["swap_used_mb"].push(currentSwap);
         systemMetrics["%user"].push(currentCpuBreakdown["%user"]);
         systemMetrics["%sys"].push(currentCpuBreakdown["%sys"]);
         systemMetrics["%nice"].push(currentCpuBreakdown["%nice"]);
@@ -2300,6 +2350,27 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         yaxis: "y2"
       });
       sysTraceMap.sys_mem = traceIdx++;
+
+      // Sys Swap
+      if (session.systemMetrics["swap_used_mb"] && session.systemMetrics["swap_used_mb"].length > 0) {
+        const isSwapChecked = document.getElementById('chkSysSwap') ? document.getElementById('chkSysSwap').checked : false;
+        traces.push({
+          x: session.timestamps,
+          y: session.systemMetrics["swap_used_mb"],
+          name: "System Swap Used (MB)",
+          type: "scatter",
+          mode: "lines",
+          line: { color: "#f43f5e", width: 1.5, dash: "dashdot" },
+          hoverlabel: {
+            bgcolor: theme.bg_card,
+            bordercolor: "#f43f5e",
+            font: { color: theme.fg_text, size: 11 }
+          },
+          visible: isSwapChecked,
+          yaxis: "y2"
+        });
+        sysTraceMap.sys_swap = traceIdx++;
+      }
 
       // CPU Breakdown stacked area traces
       const breakdownLabels = [
@@ -2565,6 +2636,13 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       const plotDiv = document.getElementById('telemetry_plot');
       if (plotDiv && typeof Plotly !== 'undefined' && sysTraceMap.cpu_breakdown) {
         Plotly.restyle(plotDiv, { visible: e.target.checked }, sysTraceMap.cpu_breakdown);
+      }
+    });
+
+    document.getElementById('chkSysSwap')?.addEventListener('change', (e) => {
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined' && sysTraceMap.sys_swap !== undefined) {
+        Plotly.restyle(plotDiv, { visible: e.target.checked }, [sysTraceMap.sys_swap]);
       }
     });
 
@@ -3122,6 +3200,7 @@ if GUI_AVAILABLE:
             self._plot_sys_cpu: bool = True
             self._plot_sys_mem: bool = True
             self._plot_cpu_breakdown: bool = False
+            self._plot_sys_swap: bool = False
             self._last_hover_idx: int = -1
             self.mpl_connect('pick_event', self._on_legend_pick)
             self.mpl_connect('motion_notify_event', self._on_mouse_move)
@@ -3155,7 +3234,8 @@ if GUI_AVAILABLE:
             selected_pids: Optional[List[int]] = None,
             plot_sys_cpu: bool = True,
             plot_sys_mem: bool = True,
-            plot_cpu_breakdown: bool = False
+            plot_cpu_breakdown: bool = False,
+            plot_sys_swap: bool = False
         ):
             self.ax_cpu.clear()
             self.ax_mem.clear()
@@ -3169,6 +3249,7 @@ if GUI_AVAILABLE:
             self._plot_sys_cpu = plot_sys_cpu
             self._plot_sys_mem = plot_sys_mem
             self._plot_cpu_breakdown = plot_cpu_breakdown
+            self._plot_sys_swap = plot_sys_swap
             self._last_hover_idx = -1
 
             if not x_indices:
@@ -3217,6 +3298,11 @@ if GUI_AVAILABLE:
             if plot_sys_mem and "mem_used_mb" in data.system_metrics:
                 mem_series = data.system_metrics["mem_used_mb"]
                 self.ax_mem.plot(x_indices, mem_series, label="Sys RAM Used", color=t["accent_mem"], linewidth=1.5, linestyle=":")
+
+            # System Swap Used
+            if plot_sys_swap and "swap_used_mb" in data.system_metrics:
+                swap_series = data.system_metrics["swap_used_mb"]
+                self.ax_mem.plot(x_indices, swap_series, label="Sys Swap Used", color="#f43f5e", linewidth=1.5, linestyle="-.")
 
             # 3. Selected PIDs
             colors = t["curve_colors"]
@@ -3300,6 +3386,10 @@ if GUI_AVAILABLE:
             if self._plot_sys_mem and "mem_used_mb" in self._current_data.system_metrics:
                 mem_val = self._current_data.system_metrics["mem_used_mb"][idx]
                 rows.append(f'<tr><td style="color:{t["accent_mem"]};font-weight:bold;">Sys RAM Used:</td><td style="color:{t["accent_mem"]};text-align:right;font-weight:bold;padding-left:14px;font-family:monospace;">{mem_val:.1f} MB</td></tr>')
+
+            if getattr(self, "_plot_sys_swap", False) and "swap_used_mb" in self._current_data.system_metrics:
+                swap_val = self._current_data.system_metrics["swap_used_mb"][idx]
+                rows.append(f'<tr><td style="color:#f43f5e;font-weight:bold;">Sys Swap Used:</td><td style="color:#f43f5e;text-align:right;font-weight:bold;padding-left:14px;font-family:monospace;">{swap_val:.1f} MB</td></tr>')
 
             colors = t["curve_colors"]
             for p_idx, pid in enumerate(self._current_selected_pids):
@@ -3589,6 +3679,10 @@ if GUI_AVAILABLE:
             self.chk_cpu_breakdown.setChecked(False)
             self.chk_cpu_breakdown.toggled.connect(self.update_plot)
 
+            self.chk_sys_swap = QCheckBox("System Swap (MB)")
+            self.chk_sys_swap.setChecked(False)
+            self.chk_sys_swap.toggled.connect(self.update_plot)
+
             self.search_input = QLineEdit()
             self.search_input.setPlaceholderText("Filter PID or process name...")
             self.search_input.textChanged.connect(self._filter_process_table)
@@ -3613,6 +3707,7 @@ if GUI_AVAILABLE:
             tb_layout.addWidget(self.chk_sys_cpu)
             tb_layout.addWidget(self.chk_sys_mem)
             tb_layout.addWidget(self.chk_cpu_breakdown)
+            tb_layout.addWidget(self.chk_sys_swap)
             tb_layout.addWidget(self.search_input, stretch=1)
             tb_layout.addWidget(self.chk_regex)
             tb_layout.addWidget(self.btn_open_browser)
@@ -4058,7 +4153,8 @@ if GUI_AVAILABLE:
                 selected_pids=selected_pids,
                 plot_sys_cpu=self.chk_sys_cpu.isChecked(),
                 plot_sys_mem=self.chk_sys_mem.isChecked(),
-                plot_cpu_breakdown=self.chk_cpu_breakdown.isChecked() if hasattr(self, 'chk_cpu_breakdown') else False
+                plot_cpu_breakdown=self.chk_cpu_breakdown.isChecked() if hasattr(self, 'chk_cpu_breakdown') else False,
+                plot_sys_swap=self.chk_sys_swap.isChecked() if hasattr(self, 'chk_sys_swap') else False
             )
 
         def open_in_browser(self):
@@ -4094,6 +4190,7 @@ if GUI_AVAILABLE:
                 plot_sys_cpu=self.chk_sys_cpu.isChecked(),
                 plot_sys_mem=self.chk_sys_mem.isChecked(),
                 plot_cpu_breakdown=self.chk_cpu_breakdown.isChecked() if hasattr(self, 'chk_cpu_breakdown') else False,
+                plot_sys_swap=self.chk_sys_swap.isChecked() if hasattr(self, 'chk_sys_swap') else False,
                 theme_name=self.current_theme
             )
             self.statusBar().showMessage(f"Report exported to {file_path}")

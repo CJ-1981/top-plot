@@ -909,6 +909,74 @@ def test_qt_cpu_breakdown():
     win.close()
 
 
+def test_swap_trace_in_plotly():
+    """Verify swap usage trace appears when swap data is present."""
+    import top_plot_v2 as tp
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(timestamp="T1", mem_metrics={"swap_used_mb": 250.0, "swap_total_mb": 4096.0, "mem_used_mb": 5000.0}),
+        tp.Snapshot(timestamp="T2", mem_metrics={"swap_used_mb": 300.0, "swap_total_mb": 4096.0, "mem_used_mb": 5100.0}),
+    ])
+    gen = tp.PlotlyHtmlGenerator(data)
+    fig = gen.create_figure(plot_sys_swap=True)
+    trace_names = [t.name for t in fig.data]
+    assert "System Swap Used (MB)" in trace_names, f"Missing swap trace. Found: {trace_names}"
+
+
+def test_swap_in_html_and_standalone():
+    """Verify Swap controls and traces exist in generated HTML and standalone app."""
+    import tempfile
+    import os
+    import top_plot_v2 as tp
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(timestamp="T1", mem_metrics={"swap_used_mb": 250.0, "swap_total_mb": 4096.0, "mem_used_mb": 5000.0}),
+    ])
+    gen = tp.PlotlyHtmlGenerator(data)
+    html_content = gen.generate_html(plot_sys_swap=True)
+    assert "chkSysSwap" in html_content
+    assert "System Swap MB" in html_content
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        standalone_path = os.path.join(tmpdir, "app.html")
+        tp.build_standalone_app(standalone_path)
+        with open(standalone_path, "r", encoding="utf-8") as f:
+            app_html = f.read()
+        assert "chkSysSwap" in app_html
+        assert "System Swap MB" in app_html
+
+
+def test_qt_swap():
+    """Verify Qt canvas and main window support Swap toggle."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    import top_plot_v2 as tp
+    import pytest
+    if not tp.GUI_AVAILABLE:
+        pytest.skip("PySide6 not available")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(timestamp="T1", mem_metrics={"swap_used_mb": 250.0, "swap_total_mb": 4096.0, "mem_used_mb": 5000.0}),
+        tp.Snapshot(timestamp="T2", mem_metrics={"swap_used_mb": 300.0, "swap_total_mb": 4096.0, "mem_used_mb": 5100.0}),
+    ])
+    canvas = tp.MplTelemetryCanvas()
+    canvas.plot_telemetry(data, plot_sys_swap=True)
+    legend = canvas.ax_cpu.get_legend()
+    assert legend is not None
+    labels = [t.get_text() for t in legend.get_texts()]
+    assert "Sys Swap Used" in labels
+
+    # Also test main window has chk_sys_swap
+    win = tp.TopPlotMainWindow()
+    assert hasattr(win, "chk_sys_swap")
+    assert win.chk_sys_swap.text() == "System Swap (MB)"
+    assert not win.chk_sys_swap.isChecked()
+    win.close()
+
+
+
+
 
 
 
