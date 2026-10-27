@@ -727,7 +727,13 @@ class PlotlyHtmlGenerator:
             showgrid=True,
             gridcolor=theme["grid"],
             color=theme["fg_text"],
-            linecolor=theme["border"]
+            linecolor=theme["border"],
+            rangeslider=dict(
+                visible=True,
+                thickness=0.08,
+                bgcolor=theme["bg_card"],
+                bordercolor=theme["border"]
+            )
         )
         fig.update_yaxes(
             title_text="CPU Usage (%)",
@@ -923,7 +929,13 @@ class PlotlyHtmlGenerator:
                 "xaxis": {
                     "gridcolor": t_val["grid"],
                     "color": t_val["fg_text"],
-                    "linecolor": t_val["border"]
+                    "linecolor": t_val["border"],
+                    "rangeslider": {
+                        "visible": True,
+                        "thickness": 0.08,
+                        "bgcolor": t_val["bg_card"],
+                        "bordercolor": t_val["border"]
+                    }
                 },
                 "yaxis": {
                     "gridcolor": t_val["grid"],
@@ -1875,7 +1887,14 @@ class PlotlyHtmlGenerator:
                 title: "Timestamp",
                 gridcolor: t.grid,
                 color: t.fg_text,
-                linecolor: t.border
+                linecolor: t.border,
+                rangeslider: {{
+                  ...((plotDiv.layout.xaxis && plotDiv.layout.xaxis.rangeslider) || {{}}),
+                  visible: true,
+                  thickness: 0.08,
+                  bgcolor: t.bg_card,
+                  bordercolor: t.border
+                }}
               }},
               yaxis: {{
                 ...plotDiv.layout.yaxis,
@@ -3092,7 +3111,13 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           showgrid: true,
           gridcolor: theme.grid,
           color: theme.fg_text,
-          linecolor: theme.border
+          linecolor: theme.border,
+          rangeslider: {
+            visible: true,
+            thickness: 0.08,
+            bgcolor: theme.bg_card,
+            bordercolor: theme.border
+          }
         },
         yaxis: {
           title: "CPU Usage (%)",
@@ -3542,7 +3567,14 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           title: "Timestamp",
           gridcolor: t.grid,
           color: t.fg_text,
-          linecolor: t.border
+          linecolor: t.border,
+          rangeslider: {
+            ...((plotDiv.layout.xaxis && plotDiv.layout.xaxis.rangeslider) || {}),
+            visible: true,
+            thickness: 0.08,
+            bgcolor: t.bg_card,
+            bordercolor: t.border
+          }
         },
         yaxis: {
           ...plotDiv.layout.yaxis,

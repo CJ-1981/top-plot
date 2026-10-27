@@ -1471,30 +1471,178 @@ console.log(JSON.stringify({
             os.unlink(temp_js)
 
 
+def test_plotly_rangeslider():
+    """Verify Plotly figure has range slider enabled."""
+    import top_plot_v2 as tp
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(timestamp="T1", cpu_metrics={"%cpu_total": 300.0}),
+        tp.Snapshot(timestamp="T2", cpu_metrics={"%cpu_total": 250.0}),
+    ])
+    gen = tp.PlotlyHtmlGenerator(data)
+    fig = gen.create_figure()
+    xaxis = fig.layout.xaxis
+    assert xaxis.rangeslider is not None, "Missing rangeslider"
+    assert xaxis.rangeslider.visible is True, "Rangeslider not visible"
+    assert xaxis.rangeslider.thickness == 0.08, "Rangeslider thickness mismatch"
 
 
+def test_standalone_and_html_theme_rangeslider():
+    """Verify standalone app and generated HTML have rangeslider and theme update preserves it."""
+    import top_plot_v2 as tp
+    import tempfile, os
+
+    # Test standalone HTML content
+    out = os.path.join(tempfile.gettempdir(), "test_standalone_rangeslider.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        content = f.read()
+    os.unlink(out)
+
+    assert "rangeslider:" in content, "Missing rangeslider in standalone app"
+    assert "visible: true" in content or "visible:true" in content
+
+    # Test generate_html
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    sample_topmen_1 = os.path.join(samples_dir, "log_topmen@20260917_17-33-01-008-Batch_3.log")
+    parser = tp.LogParserV2()
+    parsed = parser.parse_file(sample_topmen_1, encoding="utf-8")
+    assert parsed is not None
+    generator = tp.PlotlyHtmlGenerator(parsed)
+    html_content = generator.generate_html()
+
+    assert "rangeslider" in html_content, "Missing rangeslider in generate_html"
 
 
+def test_standalone_js_rangeslider_execution():
+    """Verify that standalone JS renderSession creates rangeslider and applyThemeToPlot preserves it."""
+    import top_plot_v2 as tp
+    import pytest
+    import tempfile, os, subprocess, json, shutil
 
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for JS rangeslider test")
 
+    out = os.path.join(tempfile.gettempdir(), "test_js_rangeslider.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
 
+    mock_prefix = """
+global.lastPlotCall = null;
+global.lastReactCall = null;
+const defaultElem = () => ({
+    style: {},
+    checked: true,
+    textContent: '',
+    innerHTML: '',
+    classList: { toggle: () => {}, add: () => {}, remove: () => {} },
+    getAttribute: () => '',
+    setAttribute: () => {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    appendChild: () => {},
+    addEventListener: () => {}
+});
 
+const elements = {
+    currentSessionTitle: defaultElem(),
+    snapshotBadge: defaultElem(),
+    processBadge: defaultElem(),
+    telemetryView: defaultElem(),
+    telemetry_plot: { data: [], layout: {} },
+    chkSysMem: defaultElem(),
+    chkSysCpu: defaultElem(),
+    chkSysSwap: defaultElem(),
+    chkCpuBreakdown: defaultElem(),
+    processTableBody: defaultElem(),
+    tableRowCount: defaultElem(),
+    thMasterCheck: defaultElem()
+};
+global.Plotly = {
+    newPlot: (divId, traces, layout, opts) => {
+        const div = elements[divId] || elements.telemetry_plot;
+        div.data = traces;
+        div.layout = layout;
+        global.lastPlotCall = { divId, traces, layout };
+    },
+    react: (div, traces, layout) => {
+        div.data = traces;
+        div.layout = layout;
+        global.lastReactCall = { div, traces, layout };
+    }
+};
+global.document = {
+    createElement: () => defaultElem(),
+    getElementById: (id) => elements[id] || defaultElem(),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: {
+        getAttribute: () => global._currTheme || 'Dark Fusion',
+        setAttribute: (k, v) => { global._currTheme = v; }
+    }
+};
+global.window = {
+    addEventListener: () => {}
+};
+global.FileReader = class {};
+"""
 
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
 
+    test_harness = """
+const testLog = [
+  "20260917_17-33-01",
+  "800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps",
+  "",
+  "20260917_17-33-11",
+  "800%cpu  97%user 144%nice 103%sys 322%idle  25%iow  16%irq   3%sirq  91%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 566M 328M S 62.5   7.6  11:12.68 com.google.android.apps.maps"
+].join("\\n");
 
+const parsed = parseTopLog(testLog, "demo_session");
+loadedSessions["demo_session"] = parsed;
+renderSession("demo_session");
 
+const initialSlider = global.lastPlotCall ? global.lastPlotCall.layout.xaxis.rangeslider : null;
 
+applyThemeToPlot("Light Mode");
 
+const lightSlider = global.lastReactCall ? global.lastReactCall.layout.xaxis.rangeslider : null;
 
+console.log(JSON.stringify({
+    initialSlider,
+    lightSlider
+}));
+"""
 
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_rangeslider.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
 
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert res["initialSlider"] is not None
+        assert res["initialSlider"]["visible"] is True
+        assert res["initialSlider"]["thickness"] == 0.08
+        assert res["initialSlider"]["bgcolor"] == "#1f2937"
+        assert res["initialSlider"]["bordercolor"] == "#374151"
 
-
-
-
-
-
-
+        assert res["lightSlider"] is not None
+        assert res["lightSlider"]["visible"] is True
+        assert res["lightSlider"]["thickness"] == 0.08
+        assert res["lightSlider"]["bgcolor"] == "#ffffff"
+        assert res["lightSlider"]["bordercolor"] == "#cbd5e1"
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)
 
 
 
