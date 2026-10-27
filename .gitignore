@@ -1,0 +1,30 @@
+# Python files and bytecode (local only, not in standalone web repo)
+*.py
+*.py[cod]
+*$py.class
+__pycache__/
+
+# Log samples & test files (local test bench only)
+log_samples/
+*.log
+
+# Dependencies and configs not needed for standalone HTML
+requirements.txt
+DESIGN_IMPROVEMENTS.md
+REGEX_CONFIGURATION.md
+
+# Pytest & build caches
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.spec
+*.bak
+*_telemetry_report.html
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
