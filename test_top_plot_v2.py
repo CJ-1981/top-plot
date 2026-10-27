@@ -1,0 +1,858 @@
+#!/usr/bin/env python
+"""
+TDD Test Suite for Top Plot Analyzer Version 2.0
+"""
+
+import pytest
+
+def test_parse_memory_mb():
+    """Test memory string parsing to MB float."""
+    from top_plot_v2 import parse_memory_mb
+
+    assert parse_memory_mb("569M") == pytest.approx(569.0)
+    assert parse_memory_mb("19G") == pytest.approx(19 * 1024.0)
+    assert parse_memory_mb("1024K") == pytest.approx(1.0)
+    assert parse_memory_mb("4.9M") == pytest.approx(4.9)
+    assert parse_memory_mb("0") == pytest.approx(0.0)
+    assert parse_memory_mb("") == pytest.approx(0.0)
+    assert parse_memory_mb(None) == pytest.approx(0.0)
+
+
+def test_parse_process_row():
+    """Test parsing a single process table row."""
+    from top_plot_v2 import parse_process_row, ProcessRecord
+
+    line1 = " 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps"
+    rec1 = parse_process_row(line1)
+    assert rec1 is not None
+    assert rec1.pid == 4146
+    assert rec1.user == "u10_a157"
+    assert rec1.res_mb == pytest.approx(569.0)
+    assert rec1.shr_mb == pytest.approx(328.0)
+    assert rec1.state == "S"
+    assert rec1.cpu == pytest.approx(93.1)
+    assert rec1.mem_pct == pytest.approx(7.6)
+    assert rec1.args == "com.google.android.apps.maps"
+
+    line2 = "15358 root         30  10  10G 5.4M 4.7M R  3.4   0.0   0:00.06 logcat_ecarx -f /data/log.txt"
+    rec2 = parse_process_row(line2)
+    assert rec2 is not None
+    assert rec2.pid == 15358
+    assert rec2.args == "logcat_ecarx -f /data/log.txt"
+
+    # Non-process lines should return None
+    assert parse_process_row("Tasks: 568 total, 2 running") is None
+    assert parse_process_row("PID USER PR NI VIRT RES SHR S[%CPU] %MEM TIME+ ARGS") is None
+    assert parse_process_row("") is None
+
+
+def test_log_parser_v2_snippet():
+    """Test LogParserV2 on a multi-sample snippet with CPU and per-PID data."""
+    from top_plot_v2 import LogParserV2
+
+    sample_snippet = """20260917_17-33-01
+top_cpu:
+Tasks: 568 total,   2 running, 566 sleeping,   0 stopped,   0 zombie
+  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers
+ Swap:  4194300K total,   255488K used,  3938812K free,  2436928K cached
+800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps
+ 2078 system       18  -2  21G 408M 279M S  3.4   5.5   1:40.49 system_server
+ 6864 u10_a160     20   0  18G 198M 125M S  6.8   2.6   2:36.19 com.android.vending:background
+
+20260917_17-33-11
+top_cpu:
+Tasks: 567 total,   2 running, 565 sleeping,   0 stopped,   0 zombie
+  Mem:  7594756K total,  6340152K used,  1254604K free,    15396K buffers
+ Swap:  4194300K total,   254976K used,  3939324K free,  2531312K cached
+800%cpu  97%user 144%nice 103%sys 322%idle  25%iow  16%irq   3%sirq  91%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 6864 u10_a160     20   0  18G 198M 125M S 84.3   2.6   2:44.43 com.android.vending:background
+ 4146 u10_a157     20   0  19G 566M 328M S 62.5   7.6  11:12.68 com.google.android.apps.maps
+ 2078 system       18  -2  21G 408M 279M S 12.0   5.5   1:41.00 system_server
+"""
+
+    parser = LogParserV2()
+    parsed = parser.parse_string(sample_snippet)
+    
+    assert parsed is not None
+    assert len(parsed.snapshots) == 2
+    
+    # Check timestamps
+    assert parsed.timestamps == ["20260917_17-33-01", "20260917_17-33-11"]
+    
+    # Check system CPU summary extraction
+    assert "%cpu_total" in parsed.system_metrics
+    assert len(parsed.system_metrics["%cpu_total"]) == 2
+    # First sample: 800 - 528 = 272%
+    assert parsed.system_metrics["%cpu_total"][0] == pytest.approx(272.0)
+    # Second sample: 800 - 322 = 478%
+    assert parsed.system_metrics["%cpu_total"][1] == pytest.approx(478.0)
+    
+    # Check memory summary extraction (in MB)
+    assert "mem_used_mb" in parsed.system_metrics
+    assert parsed.system_metrics["mem_used_mb"][0] == pytest.approx(6227624 / 1024.0)
+
+    # Check PID extraction
+    assert 4146 in parsed.get_all_pids()
+    assert 2078 in parsed.get_all_pids()
+    assert 6864 in parsed.get_all_pids()
+    
+    # Check PID time series
+    p4146_data = parsed.get_pid_metrics(4146)
+    assert p4146_data["args"] == "com.google.android.apps.maps"
+    assert p4146_data["cpu"] == [93.1, 62.5]
+    assert p4146_data["res_mb"] == [pytest.approx(569.0), pytest.approx(566.0)]
+    assert p4146_data["max_cpu"] == pytest.approx(93.1)
+
+    # Check top PIDs ranking
+    top_cpu = parsed.get_top_pids_by_cpu(limit=2)
+    assert len(top_cpu) == 2
+    assert top_cpu[0][0] == 4146  # PID 4146 had peak 93.1%
+    assert top_cpu[1][0] == 6864  # PID 6864 had peak 84.3%
+
+
+def test_parser_real_log_samples():
+    """Verify parsing real log samples under log_samples/ directory."""
+    import os
+    from top_plot_v2 import LogParserV2
+
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    assert os.path.exists(samples_dir), "log_samples directory must exist"
+
+    sample_top_1 = os.path.join(samples_dir, "log_top@20260917_17-33-01-008-Batch_3.log")
+    sample_topmen_1 = os.path.join(samples_dir, "log_topmen@20260917_17-33-01-008-Batch_3.log")
+
+    parser = LogParserV2()
+
+    # Test top log
+    parsed_top = parser.parse_file(sample_top_1, encoding="utf-8")
+    assert parsed_top is not None
+    assert len(parsed_top.snapshots) > 10
+    assert len(parsed_top.timestamps) == len(parsed_top.snapshots)
+    assert "%cpu_total" in parsed_top.system_metrics
+    assert len(parsed_top.system_metrics["%cpu_total"]) == len(parsed_top.snapshots)
+
+    # Verify PIDs extracted from real file
+    all_pids = parsed_top.get_all_pids()
+    assert len(all_pids) > 20
+    assert 4146 in all_pids  # Google Maps
+    assert 2078 in all_pids  # system_server
+
+    maps_metrics = parsed_top.get_pid_metrics(4146)
+    assert "maps" in maps_metrics["args"].lower()
+    assert maps_metrics["max_cpu"] > 50.0  # Maps peaked above 90%
+    assert maps_metrics["max_res_mb"] > 100.0  # Maps RES was > 500MB
+
+    # Test topmen log with /proc/meminfo
+    parsed_topmen = parser.parse_file(sample_topmen_1, encoding="utf-8")
+    assert parsed_topmen is not None
+    assert len(parsed_topmen.snapshots) > 10
+    
+    # Should have meminfo metrics
+    assert "meminfo_MemAvailable_mb" in parsed_topmen.system_metrics
+    assert len(parsed_topmen.system_metrics["meminfo_MemAvailable_mb"]) > 0
+    assert parsed_topmen.system_metrics["meminfo_MemAvailable_mb"][0] > 1000.0  # > 1GB available
+
+
+def test_plotly_html_generator():
+    """Test generating interactive HTML plot with Plotly for selected PIDs."""
+    from top_plot_v2 import LogParserV2, PlotlyHtmlGenerator
+
+    sample_snippet = """20260917_17-33-01
+top_cpu:
+  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers
+800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps
+ 2078 system       18  -2  21G 408M 279M S  3.4   5.5   1:40.49 system_server
+
+20260917_17-33-11
+top_cpu:
+  Mem:  7594756K total,  6340152K used,  1254604K free,    15396K buffers
+800%cpu  97%user 144%nice 103%sys 322%idle  25%iow  16%irq   3%sirq  91%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 566M 328M S 62.5   7.6  11:12.68 com.google.android.apps.maps
+ 2078 system       18  -2  21G 408M 279M S 12.0   5.5   1:41.00 system_server
+"""
+    parser = LogParserV2()
+    parsed = parser.parse_string(sample_snippet)
+
+    generator = PlotlyHtmlGenerator(parsed)
+    # Generate HTML with PID 4146 selected
+    html_content = generator.generate_html(selected_pids=[4146], plot_sys_cpu=True, plot_sys_mem=True)
+
+    assert html_content is not None
+    assert "<html" in html_content.lower() or "<div" in html_content.lower()
+    assert "com.google.android.apps.maps" in html_content
+    assert "plotly" in html_content.lower()
+
+
+def test_scan_log_paths():
+    """Test folder and file drag-and-drop ingestion scanner."""
+    import os
+    from top_plot_v2 import scan_log_paths, LogJob
+
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    
+    # 1. Dropping the samples folder
+    jobs = scan_log_paths([samples_dir])
+    assert len(jobs) >= 2  # Batch_3 and Batch_37
+
+    batch3_job = next((j for j in jobs if "Batch_3" in j.label), None)
+    assert batch3_job is not None
+    assert batch3_job.top_file is not None
+    assert "log_top@" in batch3_job.top_file
+    assert batch3_job.topmen_file is not None
+    assert "log_topmen@" in batch3_job.topmen_file
+
+    # 2. Dropping individual file
+    file_jobs = scan_log_paths([batch3_job.top_file])
+    assert len(file_jobs) == 1
+    assert file_jobs[0].top_file == batch3_job.top_file
+    # Automatic pairing: should discover the paired topmen file in the same directory!
+    assert file_jobs[0].topmen_file == batch3_job.topmen_file
+
+
+def test_parse_job_merging_top_and_topmen():
+    """Test merging paired top and topmen files into a unified dataset."""
+    import os
+    from top_plot_v2 import scan_log_paths, LogParserV2
+
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    jobs = scan_log_paths([samples_dir])
+    batch3_job = next(j for j in jobs if "Batch_3" in j.label)
+
+    parser = LogParserV2()
+    unified_data = parser.parse_job(batch3_job)
+
+    assert unified_data is not None
+    assert len(unified_data.snapshots) > 10
+
+    # System metrics should have BOTH CPU and Meminfo
+    assert "%cpu_total" in unified_data.system_metrics
+    assert "meminfo_MemAvailable_mb" in unified_data.system_metrics
+
+    # Processes should have both CPU peak and memory info
+    maps = unified_data.get_pid_metrics(4146)
+    assert maps["max_cpu"] > 50.0
+    assert maps["max_res_mb"] > 100.0
+
+
+def test_qt_main_window_headless():
+    """Test Qt Main Window creation, drag-drop processing, and table population in headless mode."""
+    import os
+    import tempfile
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from top_plot_v2 import TopPlotMainWindow, scan_log_paths
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    window = TopPlotMainWindow()
+    assert window is not None
+    assert "Top Log Analyzer" in window.windowTitle()
+
+    # Test loading real sample session
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    jobs = scan_log_paths([samples_dir])
+    assert len(jobs) > 0
+
+    # Load first job
+    window.load_job(jobs[0])
+
+    # Verify table has processes
+    assert window.process_table.rowCount() > 10
+
+    # Verify PID selection
+    selected_pids = window.get_selected_pids()
+    assert len(selected_pids) > 0  # Default top PIDs should be auto-selected
+
+    # Test HTML export
+    with tempfile.TemporaryDirectory() as td:
+        export_file = os.path.join(td, "test_report.html")
+        window.export_html(export_file)
+        assert os.path.exists(export_file)
+        assert os.path.getsize(export_file) > 1000
+
+    # Verify embedded canvas exists and has plotted data
+    assert hasattr(window, "plot_canvas")
+    assert window.plot_canvas is not None
+    # Check that lines were drawn on ax_cpu
+    assert len(window.plot_canvas.ax_cpu.lines) > 0
+
+
+def test_loading_indicator():
+    """Test loading and processing visual indicator in Qt UI."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication, QProgressBar
+    from top_plot_v2 import TopPlotMainWindow
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    window = TopPlotMainWindow()
+    window.show()
+    assert hasattr(window, "progress_bar")
+    assert isinstance(window.progress_bar, QProgressBar)
+    assert not window.progress_bar.isVisible()
+
+    # Trigger show_loading
+    window.show_loading("Parsing 2 log files...", 0, 100)
+    assert window.progress_bar.isVisible()
+    assert "Parsing" in window.statusBar().currentMessage()
+
+    # Trigger hide_loading
+    window.hide_loading("Ready | 2 files loaded")
+    assert not window.progress_bar.isVisible()
+    assert "Ready | 2 files loaded" in window.statusBar().currentMessage()
+
+
+def test_process_table_sorting_numeric():
+    """Test numeric sorting on process table columns (CPU%, RES MB)."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+    from top_plot_v2 import TopPlotMainWindow, scan_log_paths
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    window = TopPlotMainWindow()
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    jobs = scan_log_paths([samples_dir])
+    window.load_job(jobs[0])
+
+    table = window.process_table
+    assert table.isSortingEnabled()
+
+    # Sort by Max CPU% (Column 4) descending
+    table.sortItems(4, Qt.DescendingOrder)
+    top_cpu_val = float(table.item(0, 4).text().replace("%", ""))
+    second_cpu_val = float(table.item(1, 4).text().replace("%", ""))
+    assert top_cpu_val >= second_cpu_val
+    assert top_cpu_val > 50.0  # Peak should be ~93%
+
+    # Sort by Peak RES MB (Column 6) descending
+    table.sortItems(6, Qt.DescendingOrder)
+    top_res_val = float(table.item(0, 6).text())
+    second_res_val = float(table.item(1, 6).text())
+    assert top_res_val >= second_res_val
+    assert top_res_val > 200.0  # Peak RES should be > 500MB
+
+
+def test_process_table_regex_filter():
+    """Test free text search and regex filtering on process table."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from top_plot_v2 import TopPlotMainWindow, scan_log_paths
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    window = TopPlotMainWindow()
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    jobs = scan_log_paths([samples_dir])
+    window.load_job(jobs[0])
+
+    table = window.process_table
+    assert hasattr(window, "chk_regex")
+
+    # 1. Plain text filter without regex
+    window.chk_regex.setChecked(False)
+    window.search_input.setText("maps")
+    visible_rows = [r for r in range(table.rowCount()) if not table.isRowHidden(r)]
+    assert len(visible_rows) > 0
+    for r in visible_rows:
+        text = (table.item(r, 1).text() + " " + table.item(r, 2).text()).lower()
+        assert "maps" in text
+
+    # 2. Regex filter: (maps|system_server)
+    window.chk_regex.setChecked(True)
+    window.search_input.setText(r"(maps|system_server)")
+    visible_rows = [r for r in range(table.rowCount()) if not table.isRowHidden(r)]
+    assert len(visible_rows) >= 2
+    for r in visible_rows:
+        text = (table.item(r, 1).text() + " " + table.item(r, 2).text()).lower()
+        assert ("maps" in text) or ("system_server" in text)
+
+    # 3. Invalid regex handling (should not crash)
+    window.search_input.setText("[unclosed_bracket")
+    # Should catch re.error gracefully without crashing
+
+
+def test_theme_switching():
+    """Test dynamic switching between multiple visual color themes."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication, QComboBox
+    from top_plot_v2 import TopPlotMainWindow, scan_log_paths, THEMES
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    window = TopPlotMainWindow()
+    assert hasattr(window, "theme_combo")
+    assert isinstance(window.theme_combo, QComboBox)
+    assert window.theme_combo.count() >= 4
+
+    # Default theme
+    assert window.current_theme in THEMES
+
+    # Switch to Light Mode
+    window.set_theme("Light Mode")
+    assert window.current_theme == "Light Mode"
+    assert window.plot_canvas.theme_name == "Light Mode"
+
+    # Switch to Midnight Neon
+    window.set_theme("Midnight Neon")
+    assert window.current_theme == "Midnight Neon"
+    assert window.plot_canvas.theme_name == "Midnight Neon"
+
+    # Switch back to Dark Fusion
+    window.set_theme("Dark Fusion")
+    assert window.current_theme == "Dark Fusion"
+
+
+def test_html_export_theme_and_interactive_table():
+    """Test that HTML export adapts to color themes and embeds an interactive process table."""
+    from top_plot_v2 import LogParserV2, PlotlyHtmlGenerator
+
+    sample_snippet = """20260917_17-33-01
+top_cpu:
+  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers
+800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps
+ 2078 system       18  -2  21G 408M 279M S  3.4   5.5   1:40.49 system_server
+ 6864 u10_a160     20   0  18G 198M 125M S  6.8   2.6   2:36.19 com.android.vending:background
+
+20260917_17-33-11
+top_cpu:
+  Mem:  7594756K total,  6340152K used,  1254604K free,    15396K buffers
+800%cpu  97%user 144%nice 103%sys 322%idle  25%iow  16%irq   3%sirq  91%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 6864 u10_a160     20   0  18G 198M 125M S 84.3   2.6   2:44.43 com.android.vending:background
+ 4146 u10_a157     20   0  19G 566M 328M S 62.5   7.6  11:12.68 com.google.android.apps.maps
+ 2078 system       18  -2  21G 408M 279M S 12.0   5.5   1:41.00 system_server
+"""
+    parser = LogParserV2()
+    parsed = parser.parse_string(sample_snippet)
+    generator = PlotlyHtmlGenerator(parsed)
+
+    # 1. Test Light Mode export
+    html_light = generator.generate_html(selected_pids=[4146], theme_name="Light Mode")
+    assert "#f8fafc" in html_light or "plotly_white" in html_light
+    assert 'data-theme="Light Mode"' in html_light or "Light Mode" in html_light
+
+    # 2. Test Midnight Neon export
+    html_neon = generator.generate_html(selected_pids=[4146], theme_name="Midnight Neon")
+    assert "#0a0e17" in html_neon or "#111827" in html_neon
+
+    # 3. Test interactive process table presence & columns
+    assert 'id="processTable"' in html_neon or 'id="process-table"' in html_neon
+    assert "<table" in html_neon
+    assert "com.google.android.apps.maps" in html_neon
+    assert "system_server" in html_neon
+    assert "4146" in html_neon
+    assert "2078" in html_neon
+
+    # 4. Table controls: search box, checkboxes, quick filter buttons
+    assert 'id="processSearch"' in html_neon or 'id="tableSearch"' in html_neon
+    assert 'type="checkbox"' in html_neon
+    assert "Top 5 CPU" in html_neon
+    assert "Clear All" in html_neon
+
+    # 5. Client-side JS interactivity for Plotly restyle and table sorting
+    assert "Plotly.restyle" in html_neon
+    assert "sortTable" in html_neon or "addEventListener" in html_neon
+
+    # 6. Verify legend font color adaptation for Light Mode (must not be white font on white background)
+    import json
+    assert ".legend text" in html_light or "g.legend text" in html_light
+    
+    # Check that themeLayouts in JS dynamically updates legend font color for Light Mode
+    idx_layouts = html_light.find("const themeLayouts = ")
+    assert idx_layouts != -1
+    idx_layouts_end = html_light.find("};", idx_layouts)
+    layouts_json_str = html_light[idx_layouts + len("const themeLayouts = "):idx_layouts_end + 1]
+    layouts_obj = json.loads(layouts_json_str)
+    
+    assert "Light Mode" in layouts_obj
+    light_layout = layouts_obj["Light Mode"]
+    assert "legend" in light_layout
+    assert light_layout["legend"]["font"]["color"] == "#0f172a"
+
+
+def test_qt_legend_click_to_hide_plot():
+    """Test clicking a legend item in Qt MplTelemetryCanvas toggles plot visibility."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from matplotlib.backend_bases import MouseEvent, PickEvent
+    from top_plot_v2 import LogParserV2, MplTelemetryCanvas
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    sample_snippet = """20260917_17-33-01
+top_cpu:
+  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers
+800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps
+"""
+    parser = LogParserV2()
+    parsed = parser.parse_string(sample_snippet)
+
+    canvas = MplTelemetryCanvas()
+    canvas.plot_telemetry(parsed, selected_pids=[4146], plot_sys_cpu=True, plot_sys_mem=True)
+
+    # Verify legend exists
+    legend = canvas.ax_cpu.get_legend()
+    assert legend is not None
+
+    # Check legend lines and texts
+    leg_lines = legend.get_lines()
+    leg_texts = legend.get_texts()
+    assert len(leg_lines) >= 3  # Sys CPU, Sys RAM, PID 4146 CPU, PID 4146 RES
+    
+    # Verify pickers are enabled
+    for ll in leg_lines:
+        assert ll.get_picker() is not None and ll.get_picker() is not False
+    for lt in leg_texts:
+        assert lt.get_picker() is not None and lt.get_picker() is not False
+
+    # Simulate picking the first legend entry (Sys CPU Total%)
+    first_text = leg_texts[0]
+    entry = canvas._legend_map[first_text]
+    orig_line = entry["line"]
+    fill_coll = entry.get("fill")
+
+    # Initial state: visible
+    assert orig_line.get_visible() is True
+    if fill_coll:
+        assert fill_coll.get_visible() is True
+    assert first_text.get_alpha() in (None, 1.0)
+
+    # Simulate click pick event
+    mouse_event = MouseEvent('button_press_event', canvas, 0, 0)
+    pick_event = PickEvent('pick_event', canvas, mouse_event, first_text)
+    canvas.callbacks.process('pick_event', pick_event)
+
+    # After 1st click: should be hidden and legend dimmed
+    assert orig_line.get_visible() is False
+    if fill_coll:
+        assert fill_coll.get_visible() is False
+    assert first_text.get_alpha() == pytest.approx(0.25, abs=0.05)
+
+    # Simulate 2nd click to unhide
+    mouse_event2 = MouseEvent('button_press_event', canvas, 0, 0)
+    pick_event2 = PickEvent('pick_event', canvas, mouse_event2, first_text)
+    canvas.callbacks.process('pick_event', pick_event2)
+
+    # After 2nd click: should be visible again and opacity restored
+    assert orig_line.get_visible() is True
+    if fill_coll:
+        assert fill_coll.get_visible() is True
+    assert first_text.get_alpha() == pytest.approx(1.0, abs=0.05)
+
+
+def test_html_hover_namelength_untruncated():
+    """Test that HTML export sets hoverlabel namelength=-1 so process names are not truncated."""
+    from top_plot_v2 import LogParserV2, PlotlyHtmlGenerator
+
+    sample_snippet = """20260917_17-33-01
+top_cpu:
+  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers
+800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps
+"""
+    parser = LogParserV2()
+    parsed = parser.parse_string(sample_snippet)
+    gen = PlotlyHtmlGenerator(parsed)
+
+    fig = gen.create_figure(selected_pids=[4146])
+    assert hasattr(fig.layout, "hoverlabel")
+    assert fig.layout.hoverlabel.namelength == -1
+
+    html_content = gen.generate_html(selected_pids=[4146])
+    assert '"namelength": -1' in html_content or '"namelength":-1' in html_content
+
+
+def test_qt_canvas_hover_tooltip():
+    """Test Qt MplTelemetryCanvas mouse hover crosshair and telemetry tooltip card."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from matplotlib.backend_bases import MouseEvent, LocationEvent
+    from top_plot_v2 import LogParserV2, MplTelemetryCanvas
+
+    app = QApplication.instance() or QApplication([])
+
+    sample_snippet = """20260917_17-33-01
+top_cpu:
+  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers
+800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps
+"""
+    parser = LogParserV2()
+    parsed = parser.parse_string(sample_snippet)
+
+    canvas = MplTelemetryCanvas()
+    canvas.plot_telemetry(parsed, selected_pids=[4146], plot_sys_cpu=True, plot_sys_mem=True)
+
+    # 1. Verify cursor line exists
+    assert hasattr(canvas, "_cursor_line")
+    assert canvas._cursor_line is not None
+
+    # 2. Simulate mouse movement over the axes at sample index 0
+    move_event = MouseEvent('motion_notify_event', canvas, x=100, y=100)
+    move_event.inaxes = canvas.ax_cpu
+    move_event.xdata = 0.0
+    move_event.ydata = 50.0
+
+    canvas.callbacks.process('motion_notify_event', move_event)
+
+    # Cursor line should now be visible and positioned at x=0
+    assert canvas._cursor_line.get_visible() is True
+    assert canvas._cursor_line.get_xdata()[0] == 0
+
+    # Hover tooltip content should contain timestamp and PID info
+    tooltip_html = canvas.get_hover_tooltip_text(0)
+    assert "20260917_17-33-01" in tooltip_html
+    assert "4146" in tooltip_html
+    assert "maps" in tooltip_html
+
+    # 3. Simulate mouse leaving canvas
+    leave_event = LocationEvent('figure_leave_event', canvas, x=0, y=0)
+    canvas.callbacks.process('figure_leave_event', leave_event)
+
+    # Cursor line should become hidden
+    assert canvas._cursor_line.get_visible() is False
+
+
+def test_qt_hover_tooltip_numbers_font_color():
+    """Verify that Qt hover tooltip numbers have explicit theme font colors in Dark Fusion, Monokai, etc."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from top_plot_v2 import LogParserV2, MplTelemetryCanvas, THEMES, generate_qss
+
+    app = QApplication.instance() or QApplication([])
+    sample_snippet = """20260917_17-33-01
+top_cpu:
+  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers
+800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps
+"""
+    parser = LogParserV2()
+    parsed = parser.parse_string(sample_snippet)
+
+    canvas = MplTelemetryCanvas()
+    canvas.plot_telemetry(parsed, selected_pids=[4146], plot_sys_cpu=True, plot_sys_mem=True)
+
+    for theme_name in ["Dark Fusion", "Monokai", "Light Mode", "Midnight Neon", "Solarized Dark"]:
+        theme = THEMES[theme_name]
+        canvas.set_theme(theme_name)
+        tip_html = canvas.get_hover_tooltip_text(0)
+
+        # 1. Check QToolTip QSS rule
+        qss = generate_qss(theme)
+        assert "QToolTip" in qss
+        assert f"color: {theme['fg_text']}" in qss
+        assert f"background-color: {theme['bg_card']}" in qss
+
+        # 2. Check that numeric values in tooltip HTML have explicit font colors
+        # Ensure numbers aren't inside naked unstyled <td> elements where Qt defaults to black
+        assert "color:" in tip_html
+        # System CPU% and Memory values must have explicit color matching theme accents
+        assert f"color:{theme['accent_cpu']}" in tip_html
+        assert f"color:{theme['accent_mem']}" in tip_html
+        # Process numbers (CPU% and RES MB) must have explicit color styling
+        assert f"93.1%" in tip_html
+        assert f"569.0 MB" in tip_html
+        # Verify color is explicitly applied to the numbers, e.g. via accent_cpu/accent_mem or fg_text
+        assert f'<span style="color:{theme["accent_cpu"]}' in tip_html or f'<td style="color:{theme["fg_text"]}' in tip_html
+
+
+def test_build_standalone_app():
+    """Test building zero-dependency standalone web app HTML with in-browser log parsing."""
+    import os
+    import tempfile
+    from top_plot_v2 import build_standalone_app
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_html = os.path.join(tmpdir, "standalone_app.html")
+        res_path = build_standalone_app(out_html)
+
+        assert os.path.exists(res_path)
+        assert os.path.getsize(res_path) > 100000  # Contains Plotly JS bundle
+
+        with open(res_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        # 1. Drag & drop file upload UI
+        assert 'id="dropZone"' in html
+        assert 'type="file"' in html
+
+        # 2. In-browser client-side JS log parser
+        assert "function parseMemoryMb" in html
+        assert "function parseTopLog" in html
+
+        # 3. Interactive components
+        assert "Plotly.newPlot" in html
+        assert 'id="processTable"' in html
+        assert 'id="processSearch"' in html
+        assert "Top 5 CPU" in html
+        assert "Light Mode" in html
+        assert "Midnight Neon" in html
+        assert "namelength" in html
+        # 4. Dynamic theme switching & trace recoloring
+        assert "applyThemeToPlot" in html
+        assert "Plotly.react" in html
+        assert "hexToRgba" in html
+        assert ".legend text" in html
+        assert ".legend rect" in html
+
+
+def test_standalone_html_themes_recolor_e2e():
+    """Verify that standalone HTML dynamically recolors traces and maintains contrast across all 5 themes."""
+    import os
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.edge.options import Options
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import Select
+    except ImportError:
+        pytest.skip("Selenium not available for E2E browser test")
+
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1600,1000")
+
+    html_path = os.path.abspath("top_log_analyzer_standalone.html")
+    if not os.path.exists(html_path):
+        from top_plot_v2 import build_standalone_app
+        build_standalone_app(html_path)
+
+    file_url = f"file:///{html_path.replace(os.sep, '/')}"
+
+    try:
+        driver = webdriver.Edge(options=options)
+    except Exception:
+        pytest.skip("Edge webdriver not available in headless environment")
+
+    try:
+        import time
+        from top_plot_v2 import THEMES
+        driver.get(file_url)
+        time.sleep(1)
+
+        # Click Load Demo Log
+        driver.find_element(By.ID, "btnLoadDemo").click()
+        time.sleep(0.8)
+
+        for theme_name in ["Dark Fusion", "Light Mode", "Midnight Neon", "Solarized Dark", "Monokai"]:
+            t = THEMES[theme_name]
+            theme_select = Select(driver.find_element(By.ID, "htmlThemeSelect"))
+            theme_select.select_by_value(theme_name)
+            time.sleep(0.3)
+
+            driver.execute_script("""
+                const plotDiv = document.getElementById('telemetry_plot');
+                Plotly.Fx.hover(plotDiv, [{ curveNumber: 0, pointNumber: 0 }]);
+            """)
+            time.sleep(0.2)
+
+            info = driver.execute_script("""
+                const plotDiv = document.getElementById('telemetry_plot');
+                const hoverlayer = document.querySelector('#telemetry_plot .hoverlayer');
+                const bgPath = hoverlayer ? hoverlayer.querySelector('path') : null;
+                const legendTexts = Array.from(document.querySelectorAll('#telemetry_plot .infolayer .legend text'));
+                return {
+                    trace0_color: plotDiv.data[0].line.color,
+                    trace1_color: plotDiv.data[1].line.color,
+                    trace2_color: plotDiv.data[2].line.color,
+                    hoverBg: bgPath ? window.getComputedStyle(bgPath).fill : null,
+                    legendFill: legendTexts.length ? window.getComputedStyle(legendTexts[0]).fill : null
+                };
+            """)
+
+            assert info['trace0_color'].lower() == t['accent_cpu'].lower()
+            assert info['trace1_color'].lower() == t['accent_mem'].lower()
+            assert info['trace2_color'].lower() == t['curve_colors'][0].lower()
+            assert info['hoverBg'] is not None
+            assert info['legendFill'] is not None
+    finally:
+        driver.quit()
+
+
+def test_qt_theme_aware_widgets():
+    """Verify that all Qt widgets use theme-derived colors, not hardcoded hex."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    import top_plot_v2 as tp
+    import pytest
+    if not tp.GUI_AVAILABLE:
+        pytest.skip("PySide6 not available")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    win = tp.TopPlotMainWindow()
+
+    for theme_name in tp.THEMES:
+        win.set_theme(theme_name)
+        t = tp.THEMES[theme_name]
+
+        # DropZoneLabel should contain theme border color
+        drop_style = win.drop_label.styleSheet()
+        assert t["border"] in drop_style or t["fg_muted"] in drop_style, \
+            f"DropZone not themed for {theme_name}: {drop_style[:80]}"
+
+        # Navigation toolbar should contain theme bg_card
+        nav_style = win.nav_toolbar.styleSheet()
+        assert t["bg_card"] in nav_style or t["bg_header"] in nav_style, \
+            f"NavToolbar not themed for {theme_name}: {nav_style[:80]}"
+
+        # Table title label (search for it via objectName or parent)
+        # Verify search input doesn't have hardcoded colors
+        search_style = win.search_input.styleSheet()
+        if search_style:
+            assert "#1f2937" not in search_style or theme_name == "Dark Fusion", \
+                f"Search input has hardcoded dark fusion colors in {theme_name}"
+
+    win.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
