@@ -2158,6 +2158,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           <label class="toggle-label"><input type="checkbox" id="chkSysSwap" /> <span>System Swap MB</span></label>
           <button type="button" class="btn" id="btnDownloadCsv">📊 Download CSV</button>
           <button type="button" class="btn" id="btnDownloadJson">📋 Download JSON</button>
+          <button type="button" class="btn" id="btnExportPng">📸 Save PNG</button>
         </div>
       </div>
 
@@ -2874,8 +2875,19 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       URL.revokeObjectURL(url);
     }
 
+    function downloadPNG() {
+      const label = activeSessionKey || 'telemetry';
+      Plotly.downloadImage('telemetry_plot', {
+        format: 'png',
+        width: 1920,
+        height: 600,
+        filename: label + '_chart'
+      });
+    }
+
     document.getElementById('btnDownloadCsv')?.addEventListener('click', downloadCSV);
     document.getElementById('btnDownloadJson')?.addEventListener('click', downloadJSON);
+    document.getElementById('btnExportPng')?.addEventListener('click', downloadPNG);
 
     // Search and Regex Filter
     const searchInput = document.getElementById('processSearch');

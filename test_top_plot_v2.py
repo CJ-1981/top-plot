@@ -1202,6 +1202,20 @@ def test_standalone_html_has_spinner_and_toast():
     os.unlink(out)
 
 
+def test_standalone_html_has_png_export_button():
+    """Verify standalone HTML contains PNG export button."""
+    import top_plot_v2 as tp
+    import tempfile, os
+    out = os.path.join(tempfile.gettempdir(), "test_png.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "btnExportPng" in content or "downloadPNG" in content, "Missing PNG export button/function"
+    assert "Plotly.downloadImage" in content, "Missing Plotly.downloadImage invocation"
+    os.unlink(out)
+
+
+
 
 
 
