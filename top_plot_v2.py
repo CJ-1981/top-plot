@@ -801,7 +801,7 @@ class PlotlyHtmlGenerator:
             row_html = (
                 f'<tr data-pid="{pid}">'
                 f'<td style="text-align: center;"><input type="checkbox" class="proc-check" data-pid="{pid}" {checked_attr} /></td>'
-                f'<td><span class="pid-badge">{pid}</span></td>'
+                f'<td><span class="pid-badge" style="cursor: pointer;" onclick="showDrillDown({pid})" title="Click to view process drill-down">{pid}</span></td>'
                 f'<td class="proc-args" title="{args_esc}">{args_esc}</td>'
                 f'<td>{user_esc}</td>'
                 f'<td class="num-cell highlight-cpu" data-val="{m["max_cpu"]:.2f}">{m["max_cpu"]:.1f}%</td>'
@@ -884,6 +884,21 @@ class PlotlyHtmlGenerator:
         top_cpu_pids_json = json.dumps(top_cpu_pids)
         top_mem_pids_json = json.dumps(top_mem_pids)
         themes_dict_json = json.dumps(THEMES)
+
+        # Collect per-PID timeseries for drill-down modal
+        drill_pid_data = {}
+        for pid in sorted_pids:
+            m = self.data.get_pid_metrics(pid)
+            drill_pid_data[pid] = {
+                "args": m["args"],
+                "user": m.get("user", ""),
+                "cpu": m["cpu"],
+                "res_mb": m["res_mb"],
+                "shr_mb": m.get("shr_mb", [0.0] * len(self.data.timestamps)),
+                "mem_pct": m.get("mem_pct", [0.0] * len(self.data.timestamps))
+            }
+        drill_pid_data_json = json.dumps(drill_pid_data)
+        timestamps_json = json.dumps(self.data.timestamps)
 
         theme_layouts = {}
         for t_name, t_val in THEMES.items():
@@ -1192,6 +1207,69 @@ class PlotlyHtmlGenerator:
       font-family: monospace;
       font-weight: bold;
       border: 1px solid var(--border);
+      cursor: pointer;
+      transition: background-color 0.15s, border-color 0.15s;
+    }}
+    .pid-badge:hover {{
+      background-color: var(--border);
+      border-color: var(--accent-cpu);
+    }}
+    /* Process Drill-Down Modal Overlay */
+    .modal-overlay {{
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(17, 24, 39, 0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10001;
+    }}
+    .modal-container {{
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 1000px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+      overflow: hidden;
+    }}
+    .modal-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-header);
+    }}
+    .modal-title-group {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }}
+    .modal-close-btn {{
+      background: transparent;
+      border: none;
+      color: var(--fg-muted);
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }}
+    .modal-close-btn:hover {{
+      color: var(--fg-text);
+      background: rgba(255, 255, 255, 0.1);
+    }}
+    .modal-body {{
+      padding: 16px;
+      overflow-y: auto;
     }}
     .proc-args {{
       max-width: 420px;
@@ -1256,6 +1334,20 @@ class PlotlyHtmlGenerator:
   </style>
 </head>
 <body data-theme="{theme_name}">
+  <div id="drillDownModal" class="modal-overlay" style="display: none;">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="drillDownTitle" style="margin: 0; font-size: 1.15rem;">Process Telemetry Detail</h3>
+          <span class="badge" id="drillDownBadge">PID</span>
+        </div>
+        <button type="button" class="modal-close-btn" id="btnDrillClose" title="Close (Esc)">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="drillPlot" style="width: 100%; height: 450px;"></div>
+      </div>
+    </div>
+  </div>
   <div class="dashboard-container">
     <div class="header-bar">
       <div class="title-group">
@@ -1353,6 +1445,136 @@ class PlotlyHtmlGenerator:
       const topMemPids = {top_mem_pids_json};
       const themeLayouts = {theme_layouts_json};
       const themesDict = {themes_dict_json};
+      const drillPidData = {drill_pid_data_json};
+      const reportTimestamps = {timestamps_json};
+
+      function showDrillDown(pid) {{
+        const p = drillPidData[pid];
+        if (!p) return;
+
+        const modal = document.getElementById('drillDownModal');
+        const titleEl = document.getElementById('drillDownTitle');
+        const badgeEl = document.getElementById('drillDownBadge');
+        if (titleEl) titleEl.textContent = `PID ${{pid}}: ${{p.args}}`;
+        if (badgeEl) badgeEl.textContent = p.user ? `User: ${{p.user}}` : `PID ${{pid}}`;
+
+        const currentTheme = document.body.getAttribute('data-theme') || 'Dark Fusion';
+        const theme = themesDict[currentTheme] || themesDict['Dark Fusion'];
+
+        const timestamps = reportTimestamps || [];
+        const cpuVals = p.cpu || [];
+        const resVals = p.res_mb || [];
+        const shrVals = p.shr_mb || [];
+        const memVals = p.mem_pct || [];
+
+        const drillTraces = [
+          {{
+            x: timestamps,
+            y: cpuVals,
+            name: "CPU%",
+            type: "scatter",
+            mode: "lines",
+            line: {{ color: theme.accent_cpu || "#10b981", width: 2 }},
+            yaxis: "y"
+          }},
+          {{
+            x: timestamps,
+            y: memVals,
+            name: "MEM%",
+            type: "scatter",
+            mode: "lines",
+            line: {{ color: "#8b5cf6", width: 1.5, dash: "dot" }},
+            yaxis: "y"
+          }},
+          {{
+            x: timestamps,
+            y: resVals,
+            name: "RES (MB)",
+            type: "scatter",
+            mode: "lines",
+            line: {{ color: theme.accent_mem || "#f59e0b", width: 2 }},
+            yaxis: "y2"
+          }},
+          {{
+            x: timestamps,
+            y: shrVals,
+            name: "SHR (MB)",
+            type: "scatter",
+            mode: "lines",
+            line: {{ color: "#06b6d4", width: 1.5, dash: "dash" }},
+            yaxis: "y2"
+          }}
+        ];
+
+        const drillLayout = {{
+          template: theme.plotly_template || (currentTheme === "Light Mode" ? "plotly_white" : "plotly_dark"),
+          paper_bgcolor: theme.bg_card,
+          plot_bgcolor: theme.bg_card,
+          font: {{ color: theme.fg_text, family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }},
+          hovermode: "x unified",
+          hoverlabel: {{
+            namelength: -1,
+            bgcolor: theme.bg_card,
+            bordercolor: theme.border,
+            font: {{ color: theme.fg_text, size: 11 }}
+          }},
+          margin: {{ l: 50, r: 50, t: 30, b: 40 }},
+          legend: {{
+            orientation: "h",
+            yanchor: "bottom",
+            y: 1.02,
+            xanchor: "right",
+            x: 1,
+            bgcolor: theme.bg_card,
+            bordercolor: theme.border,
+            borderwidth: 1,
+            font: {{ color: theme.fg_text, size: 11 }}
+          }},
+          xaxis: {{
+            title: "Timestamp",
+            showgrid: true,
+            gridcolor: theme.grid,
+            color: theme.fg_text,
+            linecolor: theme.border
+          }},
+          yaxis: {{
+            title: "Percentage (%)",
+            showgrid: true,
+            gridcolor: theme.grid,
+            color: theme.accent_cpu || "#10b981"
+          }},
+          yaxis2: {{
+            title: "Memory (MB)",
+            overlaying: "y",
+            side: "right",
+            showgrid: false,
+            color: theme.accent_mem || "#f59e0b"
+          }}
+        }};
+
+        if (modal) modal.style.display = 'flex';
+        Plotly.newPlot("drillPlot", drillTraces, drillLayout, {{ responsive: true }});
+      }}
+
+      function closeDrillDown() {{
+        const modal = document.getElementById('drillDownModal');
+        if (modal) modal.style.display = 'none';
+      }}
+
+      window.showDrillDown = showDrillDown;
+      window.closeDrillDown = closeDrillDown;
+
+      document.getElementById('btnDrillClose')?.addEventListener('click', closeDrillDown);
+      document.getElementById('drillDownModal')?.addEventListener('click', function(e) {{
+        if (e.target.id === 'drillDownModal') {{
+          closeDrillDown();
+        }}
+      }});
+      window.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape' || e.key === 'Esc') {{
+          closeDrillDown();
+        }}
+      }});
 
       function hexToRgba(hex, alpha) {{
         if (!hex) return `rgba(16, 185, 129, ${{alpha}})`;
@@ -2079,6 +2301,69 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       font-family: monospace;
       font-weight: bold;
       border: 1px solid var(--border);
+      cursor: pointer;
+      transition: background-color 0.15s, border-color 0.15s;
+    }
+    .pid-badge:hover {
+      background-color: var(--border);
+      border-color: var(--accent-cpu);
+    }
+    /* Process Drill-Down Modal Overlay */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(17, 24, 39, 0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10001;
+    }
+    .modal-container {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 1000px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+      overflow: hidden;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-header);
+    }
+    .modal-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: var(--fg-muted);
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .modal-close-btn:hover {
+      color: var(--fg-text);
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .modal-body {
+      padding: 16px;
+      overflow-y: auto;
     }
     .proc-args {
       max-width: 440px;
@@ -2217,6 +2502,20 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
 <body data-theme="Dark Fusion">
   <div id="loadingOverlay" class="loading-overlay"><div class="loading-spinner"></div><div class="loading-text">Parsing log files...</div></div>
   <div id="toastContainer" class="toast-container"></div>
+  <div id="drillDownModal" class="modal-overlay" style="display: none;">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="drillDownTitle" style="margin: 0; font-size: 1.15rem;">Process Telemetry Detail</h3>
+          <span class="badge" id="drillDownBadge">PID</span>
+        </div>
+        <button type="button" class="modal-close-btn" id="btnDrillClose" title="Close (Esc)">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="drillPlot" style="width: 100%; height: 450px;"></div>
+      </div>
+    </div>
+  </div>
   <div class="dashboard-container">
     <!-- Header Bar -->
     <div class="header-bar">
@@ -2827,7 +3126,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         tr.setAttribute("data-pid", pid);
         tr.innerHTML = `
           <td style="text-align: center;"><input type="checkbox" class="proc-check" data-pid="${pid}" ${isChecked ? 'checked' : ''} /></td>
-          <td><span class="pid-badge">${pid}</span></td>
+          <td><span class="pid-badge" style="cursor: pointer;" onclick="showDrillDown(${pid})" title="Click to view process drill-down">${pid}</span></td>
           <td class="proc-args" title="${p.args.replace(/"/g, '&quot;')}">${p.args.replace(/</g, '&lt;')}</td>
           <td>${(p.user || '').replace(/</g, '&lt;')}</td>
           <td class="num-cell highlight-cpu" data-val="${p.max_cpu.toFixed(2)}">${p.max_cpu.toFixed(1)}%</td>
@@ -3517,6 +3816,137 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       dropZone.style.display = "none";
       renderSession(targetKey);
     }
+
+    // Process Drill-Down View
+    function showDrillDown(pid) {
+      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const session = loadedSessions[activeSessionKey];
+      const p = session.pidData[pid];
+      if (!p) return;
+
+      const modal = document.getElementById('drillDownModal');
+      const titleEl = document.getElementById('drillDownTitle');
+      const badgeEl = document.getElementById('drillDownBadge');
+      if (titleEl) titleEl.textContent = `PID ${pid}: ${p.args}`;
+      if (badgeEl) badgeEl.textContent = p.user ? `User: ${p.user}` : `PID ${pid}`;
+
+      const currentTheme = document.body.getAttribute('data-theme') || 'Dark Fusion';
+      const theme = THEMES[currentTheme] || THEMES['Dark Fusion'];
+
+      const timestamps = session.timestamps || [];
+      const cpuVals = p.cpu || [];
+      const resVals = p.res_mb || [];
+      const shrVals = p.shr_mb || [];
+      const memVals = p.mem_pct || [];
+
+      const drillTraces = [
+        {
+          x: timestamps,
+          y: cpuVals,
+          name: "CPU%",
+          type: "scatter",
+          mode: "lines",
+          line: { color: theme.accent_cpu || "#10b981", width: 2 },
+          yaxis: "y"
+        },
+        {
+          x: timestamps,
+          y: memVals,
+          name: "MEM%",
+          type: "scatter",
+          mode: "lines",
+          line: { color: "#8b5cf6", width: 1.5, dash: "dot" },
+          yaxis: "y"
+        },
+        {
+          x: timestamps,
+          y: resVals,
+          name: "RES (MB)",
+          type: "scatter",
+          mode: "lines",
+          line: { color: theme.accent_mem || "#f59e0b", width: 2 },
+          yaxis: "y2"
+        },
+        {
+          x: timestamps,
+          y: shrVals,
+          name: "SHR (MB)",
+          type: "scatter",
+          mode: "lines",
+          line: { color: "#06b6d4", width: 1.5, dash: "dash" },
+          yaxis: "y2"
+        }
+      ];
+
+      const drillLayout = {
+        template: theme.plotly_template || (currentTheme === "Light Mode" ? "plotly_white" : "plotly_dark"),
+        paper_bgcolor: theme.bg_card,
+        plot_bgcolor: theme.bg_card,
+        font: { color: theme.fg_text, family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" },
+        hovermode: "x unified",
+        hoverlabel: {
+          namelength: -1,
+          bgcolor: theme.bg_card,
+          bordercolor: theme.border,
+          font: { color: theme.fg_text, size: 11 }
+        },
+        margin: { l: 50, r: 50, t: 30, b: 40 },
+        legend: {
+          orientation: "h",
+          yanchor: "bottom",
+          y: 1.02,
+          xanchor: "right",
+          x: 1,
+          bgcolor: theme.bg_card,
+          bordercolor: theme.border,
+          borderwidth: 1,
+          font: { color: theme.fg_text, size: 11 }
+        },
+        xaxis: {
+          title: "Timestamp",
+          showgrid: true,
+          gridcolor: theme.grid,
+          color: theme.fg_text,
+          linecolor: theme.border
+        },
+        yaxis: {
+          title: "Percentage (%)",
+          showgrid: true,
+          gridcolor: theme.grid,
+          color: theme.accent_cpu || "#10b981"
+        },
+        yaxis2: {
+          title: "Memory (MB)",
+          overlaying: "y",
+          side: "right",
+          showgrid: false,
+          color: theme.accent_mem || "#f59e0b"
+        }
+      };
+
+      if (modal) modal.style.display = 'flex';
+      Plotly.newPlot("drillPlot", drillTraces, drillLayout, { responsive: true });
+    }
+
+    function closeDrillDown() {
+      const modal = document.getElementById('drillDownModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    window.showDrillDown = showDrillDown;
+    window.closeDrillDown = closeDrillDown;
+
+    document.getElementById('btnDrillClose')?.addEventListener('click', closeDrillDown);
+    document.getElementById('drillDownModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'drillDownModal') {
+        closeDrillDown();
+      }
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        closeDrillDown();
+      }
+    });
 
     // Load Demo Log Handler
     document.getElementById('btnLoadDemo')?.addEventListener('click', () => {

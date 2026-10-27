@@ -1330,6 +1330,149 @@ console.log(JSON.stringify({
             os.unlink(temp_js)
 
 
+def test_standalone_html_has_drilldown():
+    """Verify standalone HTML contains process drill-down modal."""
+    import top_plot_v2 as tp
+    import tempfile, os
+    out = os.path.join(tempfile.gettempdir(), "test_drilldown.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "drillDownModal" in content, "Missing drill-down modal"
+    assert "showDrillDown" in content, "Missing showDrillDown function"
+    assert "drillPlot" in content, "Missing drillPlot element"
+    assert "cursor: pointer" in content or "cursor:pointer" in content, "Missing clickable cursor for PID badge"
+    os.unlink(out)
+
+
+def test_generate_html_has_drilldown():
+    """Verify generate_html contains process drill-down modal."""
+    import top_plot_v2 as tp
+    import os
+    samples_dir = os.path.join(os.path.dirname(__file__), "log_samples")
+    sample_topmen_1 = os.path.join(samples_dir, "log_topmen@20260917_17-33-01-008-Batch_3.log")
+    parser = tp.LogParserV2()
+    parsed = parser.parse_file(sample_topmen_1, encoding="utf-8")
+    assert parsed is not None
+    generator = tp.PlotlyHtmlGenerator(parsed)
+    html_content = generator.generate_html()
+    assert "drillDownModal" in html_content, "Missing drillDownModal in generate_html"
+    assert "showDrillDown" in html_content, "Missing showDrillDown function in generate_html"
+    assert "drillPlot" in html_content, "Missing drillPlot element in generate_html"
+    assert "cursor: pointer" in html_content or "cursor:pointer" in html_content, "Missing clickable cursor in generate_html"
+
+
+def test_standalone_js_drilldown_modal_execution():
+    """Verify that standalone JS showDrillDown correctly generates 4 traces and handles close."""
+    import top_plot_v2 as tp
+    import pytest
+    import tempfile, os, subprocess, json, shutil
+
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for JS drilldown test")
+
+    out = os.path.join(tempfile.gettempdir(), "test_js_drilldown.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
+
+    mock_prefix = """
+global.lastPlotCall = null;
+global.Plotly = {
+    newPlot: (divId, traces, layout, opts) => {
+        global.lastPlotCall = { divId, traces, layout };
+    }
+};
+const elements = {
+    drillDownModal: { style: { display: 'none' }, addEventListener: () => {} },
+    drillDownTitle: { textContent: '' },
+    drillDownBadge: { textContent: '' },
+    drillPlot: {},
+    btnDrillClose: { addEventListener: (ev, fn) => { elements.btnDrillClose._cb = fn; } }
+};
+global.document = {
+    getElementById: (id) => elements[id] || { style: {}, querySelector: () => null, querySelectorAll: () => [], appendChild: () => {}, addEventListener: () => {} },
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: { getAttribute: () => 'Dark Fusion' }
+};
+global.window = {
+    addEventListener: (ev, fn) => {
+        if (!global.window._listeners) global.window._listeners = {};
+        global.window._listeners[ev] = fn;
+    }
+};
+global.FileReader = class {};
+"""
+
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
+
+    test_harness = """
+const testLog = [
+  "20260917_17-33-01",
+  "800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps",
+  "",
+  "20260917_17-33-11",
+  "800%cpu  97%user 144%nice 103%sys 322%idle  25%iow  16%irq   3%sirq  91%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 566M 328M S 62.5   7.6  11:12.68 com.google.android.apps.maps"
+].join("\\n");
+
+const parsed = parseTopLog(testLog, "demo_session");
+loadedSessions["demo_session"] = parsed;
+activeSessionKey = "demo_session";
+
+showDrillDown(4146);
+
+const titleText = elements.drillDownTitle.textContent;
+const modalDisplayAfterShow = elements.drillDownModal.style.display;
+const tracesCount = global.lastPlotCall ? global.lastPlotCall.traces.length : 0;
+const traceNames = global.lastPlotCall ? global.lastPlotCall.traces.map(t => t.name) : [];
+const hasDualAxes = global.lastPlotCall ? (!!global.lastPlotCall.layout.yaxis && !!global.lastPlotCall.layout.yaxis2) : false;
+
+closeDrillDown();
+const modalDisplayAfterClose = elements.drillDownModal.style.display;
+
+console.log(JSON.stringify({
+    titleText,
+    modalDisplayAfterShow,
+    tracesCount,
+    traceNames,
+    hasDualAxes,
+    modalDisplayAfterClose
+}));
+"""
+
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_drilldown.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
+
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert "4146" in res["titleText"]
+        assert "maps" in res["titleText"]
+        assert res["modalDisplayAfterShow"] == "flex"
+        assert res["tracesCount"] == 4
+        assert "CPU%" in res["traceNames"]
+        assert "MEM%" in res["traceNames"]
+        assert "RES (MB)" in res["traceNames"]
+        assert "SHR (MB)" in res["traceNames"]
+        assert res["hasDualAxes"] is True
+        assert res["modalDisplayAfterClose"] == "none"
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)
+
+
+
+
 
 
 
