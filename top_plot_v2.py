@@ -486,6 +486,7 @@ class PlotlyHtmlGenerator:
         selected_pids: Optional[List[int]] = None,
         plot_sys_cpu: bool = True,
         plot_sys_mem: bool = True,
+        plot_cpu_breakdown: bool = False,
         theme_name: str = "Dark Fusion",
         include_all_processes: bool = True
     ):
@@ -498,7 +499,7 @@ class PlotlyHtmlGenerator:
         x_vals = self.data.timestamps
 
         trace_idx = 0
-        sys_traces: Dict[str, int] = {}
+        sys_traces: Dict[str, Any] = {}
         pid_traces: Dict[int, List[int]] = {}
 
         # 1. Total System CPU
@@ -519,6 +520,43 @@ class PlotlyHtmlGenerator:
             )
             sys_traces["sys_cpu"] = trace_idx
             trace_idx += 1
+
+        # CPU Breakdown stacked area traces
+        cpu_breakdown_labels = [
+            ("%user", "CPU %user"),
+            ("%sys", "CPU %sys"),
+            ("%nice", "CPU %nice"),
+            ("%irq", "CPU %irq"),
+            ("%sirq", "CPU %sirq"),
+            ("%iow", "CPU %iow"),
+        ]
+        cpu_breakdown_colors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4"]
+
+        bd_trace_indices = []
+        if plot_cpu_breakdown or include_all_processes:
+            for idx, (metric_key, trace_label) in enumerate(cpu_breakdown_labels):
+                if metric_key in self.data.system_metrics:
+                    bd_color = cpu_breakdown_colors[idx % len(cpu_breakdown_colors)]
+                    bd_rgb = hex_to_rgb_str(bd_color)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_vals,
+                            y=self.data.system_metrics[metric_key],
+                            name=trace_label,
+                            mode="lines",
+                            line=dict(color=bd_color, width=1.5),
+                            fill="tozeroy",
+                            fillcolor=f"rgba({bd_rgb}, 0.15)",
+                            visible=bool(plot_cpu_breakdown),
+                            stackgroup="cpubreakdown"
+                        ),
+                        secondary_y=False
+                    )
+                    sys_traces[f"bd_{metric_key}"] = trace_idx
+                    bd_trace_indices.append(trace_idx)
+                    trace_idx += 1
+            if bd_trace_indices:
+                sys_traces["cpu_breakdown"] = bd_trace_indices
 
         # 2. System Memory Used (MB)
         if "mem_used_mb" in self.data.system_metrics:
@@ -643,6 +681,7 @@ class PlotlyHtmlGenerator:
         selected_pids: Optional[List[int]] = None,
         plot_sys_cpu: bool = True,
         plot_sys_mem: bool = True,
+        plot_cpu_breakdown: bool = False,
         theme_name: str = "Dark Fusion",
         include_plotlyjs: bool = True
     ) -> str:
@@ -654,6 +693,7 @@ class PlotlyHtmlGenerator:
             selected_pids=selected_pids,
             plot_sys_cpu=plot_sys_cpu,
             plot_sys_mem=plot_sys_mem,
+            plot_cpu_breakdown=plot_cpu_breakdown,
             theme_name=theme_name,
             include_all_processes=True
         )
@@ -750,6 +790,7 @@ class PlotlyHtmlGenerator:
 
         chk_sys_cpu_attr = "checked" if plot_sys_cpu else ""
         chk_sys_mem_attr = "checked" if plot_sys_mem else ""
+        chk_cpu_breakdown_attr = "checked" if plot_cpu_breakdown else ""
 
         html_template = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1072,6 +1113,10 @@ class PlotlyHtmlGenerator:
           <input type="checkbox" id="chkSysMem" {chk_sys_mem_attr} />
           <span>System RAM MB</span>
         </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="chkCpuBreakdown" {chk_cpu_breakdown_attr} />
+          <span>CPU Breakdown</span>
+        </label>
         <label class="toggle-label" style="margin-left: 8px;">
           <span>Theme:</span>
           <select id="htmlThemeSelect" class="theme-select">
@@ -1206,6 +1251,17 @@ class PlotlyHtmlGenerator:
           const plotDiv = getPlotDiv();
           if (plotDiv && typeof Plotly !== 'undefined') {{
             Plotly.restyle(plotDiv, {{ visible: e.target.checked ? true : false }}, [sysTraceMap.sys_mem]);
+          }}
+        }});
+      }}
+
+      const chkCpuBreakdown = document.getElementById('chkCpuBreakdown');
+      const bdIndices = sysTraceMap.cpu_breakdown || Object.keys(sysTraceMap).filter(function(k) {{ return k.startsWith('bd_'); }}).map(function(k) {{ return sysTraceMap[k]; }});
+      if (chkCpuBreakdown && bdIndices.length > 0) {{
+        chkCpuBreakdown.addEventListener('change', function(e) {{
+          const plotDiv = getPlotDiv();
+          if (plotDiv && typeof Plotly !== 'undefined') {{
+            Plotly.restyle(plotDiv, {{ visible: e.target.checked ? true : false }}, bdIndices);
           }}
         }});
       }}
@@ -1452,6 +1508,7 @@ class PlotlyHtmlGenerator:
         selected_pids: Optional[List[int]] = None,
         plot_sys_cpu: bool = True,
         plot_sys_mem: bool = True,
+        plot_cpu_breakdown: bool = False,
         theme_name: str = "Dark Fusion",
         include_plotlyjs: bool = True
     ) -> str:
@@ -1460,6 +1517,7 @@ class PlotlyHtmlGenerator:
             selected_pids=selected_pids,
             plot_sys_cpu=plot_sys_cpu,
             plot_sys_mem=plot_sys_mem,
+            plot_cpu_breakdown=plot_cpu_breakdown,
             theme_name=theme_name,
             include_plotlyjs=include_plotlyjs
         )
@@ -1929,6 +1987,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         <div class="header-controls">
           <label class="toggle-label"><input type="checkbox" id="chkSysCpu" checked /> <span>System CPU%</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkSysMem" checked /> <span>System RAM MB</span></label>
+          <label class="toggle-label"><input type="checkbox" id="chkCpuBreakdown" /> <span>CPU Breakdown</span></label>
         </div>
       </div>
 
@@ -2019,18 +2078,28 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
     function parseTopLog(content, filename) {
       const lines = content.split(/\\r?\\n/);
       const timestamps = [];
-      const systemMetrics = { "%cpu_total": [], "mem_used_mb": [] };
+      const systemMetrics = {
+        "%cpu_total": [],
+        "mem_used_mb": [],
+        "%user": [],
+        "%sys": [],
+        "%nice": [],
+        "%irq": [],
+        "%sirq": [],
+        "%iow": []
+      };
       const pidData = {};
 
       let currentTs = null;
       let currentCpu = 0.0;
       let currentMem = 0.0;
+      let currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
       let currentPidsInSnapshot = {};
       let inProcTable = false;
 
       const tsRegex = /^(\\d{8}[_-]\\d{2}[-:]\\d{2}[-:]\\d{2}|\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}|\\d{8}_\\d{6})/;
       const memRegex = /Mem:\\s+(\\d+[KkMmGg]?)\\s+total,\\s+(\\d+[KkMmGg]?)\\s+used/i;
-      const cpuRegex = /(\\d+)%cpu\\s+(\\d+)%user\\s+(\\d+)%nice\\s+(\\d+)%sys\\s+(\\d+)%idle/i;
+      const cpuRegex = /(\\d+)%cpu\\s+(\\d+)%user\\s+(\\d+)%nice\\s+(\\d+)%sys\\s+(\\d+)%idle(?:\\s+(\\d+)%iow)?(?:\\s+(\\d+)%irq)?(?:\\s+(\\d+)%sirq)?/i;
       const procRegex = /^\\s*(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+([RSDZTtWw])\\s+(\\d+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+(\\S+)\\s+(.+)$/;
 
       for (let i = 0; i < lines.length; i++) {
@@ -2041,6 +2110,12 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
             timestamps.push(currentTs);
             systemMetrics["%cpu_total"].push(currentCpu);
             systemMetrics["mem_used_mb"].push(currentMem);
+            systemMetrics["%user"].push(currentCpuBreakdown["%user"]);
+            systemMetrics["%sys"].push(currentCpuBreakdown["%sys"]);
+            systemMetrics["%nice"].push(currentCpuBreakdown["%nice"]);
+            systemMetrics["%irq"].push(currentCpuBreakdown["%irq"]);
+            systemMetrics["%sirq"].push(currentCpuBreakdown["%sirq"]);
+            systemMetrics["%iow"].push(currentCpuBreakdown["%iow"]);
             for (const pid in pidData) {
               if (!currentPidsInSnapshot[pid]) {
                 pidData[pid].cpu.push(0.0);
@@ -2053,6 +2128,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           currentTs = tsMatch[1];
           currentCpu = 0.0;
           currentMem = 0.0;
+          currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
           currentPidsInSnapshot = {};
           inProcTable = false;
           continue;
@@ -2069,8 +2145,22 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         const cpuMatch = line.match(cpuRegex);
         if (cpuMatch) {
           const cap = parseFloat(cpuMatch[1]);
-          const idle = parseFloat(cpuMatch[5]);
+          const user = parseFloat(cpuMatch[2]) || 0.0;
+          const nice = parseFloat(cpuMatch[3]) || 0.0;
+          const sys = parseFloat(cpuMatch[4]) || 0.0;
+          const idle = parseFloat(cpuMatch[5]) || 0.0;
+          const iow = parseFloat(cpuMatch[6]) || 0.0;
+          const irq = parseFloat(cpuMatch[7]) || 0.0;
+          const sirq = parseFloat(cpuMatch[8]) || 0.0;
           currentCpu = Math.max(0.0, cap - idle);
+          currentCpuBreakdown = {
+            "%user": user,
+            "%sys": sys,
+            "%nice": nice,
+            "%irq": irq,
+            "%sirq": sirq,
+            "%iow": iow
+          };
           continue;
         }
 
@@ -2118,6 +2208,12 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         timestamps.push(currentTs);
         systemMetrics["%cpu_total"].push(currentCpu);
         systemMetrics["mem_used_mb"].push(currentMem);
+        systemMetrics["%user"].push(currentCpuBreakdown["%user"]);
+        systemMetrics["%sys"].push(currentCpuBreakdown["%sys"]);
+        systemMetrics["%nice"].push(currentCpuBreakdown["%nice"]);
+        systemMetrics["%irq"].push(currentCpuBreakdown["%irq"]);
+        systemMetrics["%sirq"].push(currentCpuBreakdown["%sirq"]);
+        systemMetrics["%iow"].push(currentCpuBreakdown["%iow"]);
         for (const pid in pidData) {
           if (!currentPidsInSnapshot[pid]) {
             pidData[pid].cpu.push(0.0);
@@ -2204,6 +2300,47 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         yaxis: "y2"
       });
       sysTraceMap.sys_mem = traceIdx++;
+
+      // CPU Breakdown stacked area traces
+      const breakdownLabels = [
+        ["%user", "CPU %user"],
+        ["%sys", "CPU %sys"],
+        ["%nice", "CPU %nice"],
+        ["%irq", "CPU %irq"],
+        ["%sirq", "CPU %sirq"],
+        ["%iow", "CPU %iow"]
+      ];
+      const breakdownColors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4"];
+      const isBreakdownChecked = document.getElementById('chkCpuBreakdown') ? document.getElementById('chkCpuBreakdown').checked : false;
+      const bdTraceIndices = [];
+
+      breakdownLabels.forEach(([key, label], bIdx) => {
+        if (session.systemMetrics[key] && session.systemMetrics[key].length > 0) {
+          const col = breakdownColors[bIdx % breakdownColors.length];
+          const bdIdx = traceIdx++;
+          bdTraceIndices.push(bdIdx);
+          sysTraceMap[`bd_${key}`] = bdIdx;
+          traces.push({
+            x: session.timestamps,
+            y: session.systemMetrics[key],
+            name: label,
+            type: "scatter",
+            mode: "lines",
+            line: { color: col, width: 1.5 },
+            fill: "tozeroy",
+            fillcolor: hexToRgba(col, 0.15),
+            stackgroup: "cpubreakdown",
+            hoverlabel: {
+              bgcolor: theme.bg_card,
+              bordercolor: col,
+              font: { color: theme.fg_text, size: 11 }
+            },
+            visible: isBreakdownChecked,
+            yaxis: "y"
+          });
+        }
+      });
+      sysTraceMap.cpu_breakdown = bdTraceIndices;
 
       // 3. Processes (top 4 checked initially)
       const initialChecked = new Set(session.topCpuPids.slice(0, 4));
@@ -2421,6 +2558,13 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       const plotDiv = document.getElementById('telemetry_plot');
       if (plotDiv && typeof Plotly !== 'undefined' && sysTraceMap.sys_mem !== undefined) {
         Plotly.restyle(plotDiv, { visible: e.target.checked }, [sysTraceMap.sys_mem]);
+      }
+    });
+
+    document.getElementById('chkCpuBreakdown')?.addEventListener('change', (e) => {
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined' && sysTraceMap.cpu_breakdown) {
+        Plotly.restyle(plotDiv, { visible: e.target.checked }, sysTraceMap.cpu_breakdown);
       }
     });
 
@@ -2977,6 +3121,7 @@ if GUI_AVAILABLE:
             self._current_selected_pids: List[int] = []
             self._plot_sys_cpu: bool = True
             self._plot_sys_mem: bool = True
+            self._plot_cpu_breakdown: bool = False
             self._last_hover_idx: int = -1
             self.mpl_connect('pick_event', self._on_legend_pick)
             self.mpl_connect('motion_notify_event', self._on_mouse_move)
@@ -3009,7 +3154,8 @@ if GUI_AVAILABLE:
             data: ParsedLogV2,
             selected_pids: Optional[List[int]] = None,
             plot_sys_cpu: bool = True,
-            plot_sys_mem: bool = True
+            plot_sys_mem: bool = True,
+            plot_cpu_breakdown: bool = False
         ):
             self.ax_cpu.clear()
             self.ax_mem.clear()
@@ -3022,6 +3168,7 @@ if GUI_AVAILABLE:
             self._current_selected_pids = list(selected_pids or [])
             self._plot_sys_cpu = plot_sys_cpu
             self._plot_sys_mem = plot_sys_mem
+            self._plot_cpu_breakdown = plot_cpu_breakdown
             self._last_hover_idx = -1
 
             if not x_indices:
@@ -3041,6 +3188,30 @@ if GUI_AVAILABLE:
                 cpu_series = data.system_metrics["%cpu_total"]
                 line_sys_cpu, = self.ax_cpu.plot(x_indices, cpu_series, label="Sys CPU Total%", color=t["accent_cpu"], linewidth=2.0)
                 fill_sys_cpu = self.ax_cpu.fill_between(x_indices, 0, cpu_series, color=t["accent_cpu"], alpha=0.1)
+
+            # CPU Breakdown stacked area traces
+            cpu_breakdown_labels = [
+                ("%user", "CPU %user"),
+                ("%sys", "CPU %sys"),
+                ("%nice", "CPU %nice"),
+                ("%irq", "CPU %irq"),
+                ("%sirq", "CPU %sirq"),
+                ("%iow", "CPU %iow"),
+            ]
+            cpu_breakdown_colors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4"]
+
+            breakdown_fills: Dict[Any, Any] = {}
+            if plot_cpu_breakdown:
+                current_bottom = [0.0] * len(x_indices)
+                for idx, (metric_key, trace_label) in enumerate(cpu_breakdown_labels):
+                    if metric_key in data.system_metrics:
+                        vals = data.system_metrics[metric_key]
+                        bd_color = cpu_breakdown_colors[idx % len(cpu_breakdown_colors)]
+                        current_top = [b + v for b, v in zip(current_bottom, vals)]
+                        line_bd, = self.ax_cpu.plot(x_indices, current_top, label=trace_label, color=bd_color, linewidth=1.2)
+                        fill_bd = self.ax_cpu.fill_between(x_indices, current_bottom, current_top, color=bd_color, alpha=0.25)
+                        breakdown_fills[line_bd] = fill_bd
+                        current_bottom = current_top
 
             # 2. System RAM Used
             if plot_sys_mem and "mem_used_mb" in data.system_metrics:
@@ -3084,7 +3255,7 @@ if GUI_AVAILABLE:
                     leg_line.set_pickradius(8)
                     leg_text.set_picker(True)
 
-                    fill = fill_sys_cpu if orig_line is line_sys_cpu else None
+                    fill = fill_sys_cpu if orig_line is line_sys_cpu else breakdown_fills.get(orig_line)
                     entry = {
                         "line": orig_line,
                         "fill": fill,
@@ -3109,6 +3280,22 @@ if GUI_AVAILABLE:
             if self._plot_sys_cpu and "%cpu_total" in self._current_data.system_metrics:
                 cpu_val = self._current_data.system_metrics["%cpu_total"][idx]
                 rows.append(f'<tr><td style="color:{t["accent_cpu"]};font-weight:bold;">Sys Total CPU%:</td><td style="color:{t["accent_cpu"]};text-align:right;font-weight:bold;padding-left:14px;font-family:monospace;">{cpu_val:.1f}%</td></tr>')
+
+            if self._plot_cpu_breakdown:
+                cpu_breakdown_labels = [
+                    ("%user", "CPU %user"),
+                    ("%sys", "CPU %sys"),
+                    ("%nice", "CPU %nice"),
+                    ("%irq", "CPU %irq"),
+                    ("%sirq", "CPU %sirq"),
+                    ("%iow", "CPU %iow"),
+                ]
+                cpu_breakdown_colors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4"]
+                for b_idx, (m_key, m_label) in enumerate(cpu_breakdown_labels):
+                    if m_key in self._current_data.system_metrics:
+                        b_val = self._current_data.system_metrics[m_key][idx]
+                        b_col = cpu_breakdown_colors[b_idx % len(cpu_breakdown_colors)]
+                        rows.append(f'<tr><td style="color:{b_col};padding-left:10px;">{m_label}:</td><td style="color:{b_col};text-align:right;padding-left:14px;font-family:monospace;">{b_val:.1f}%</td></tr>')
 
             if self._plot_sys_mem and "mem_used_mb" in self._current_data.system_metrics:
                 mem_val = self._current_data.system_metrics["mem_used_mb"][idx]
@@ -3398,6 +3585,10 @@ if GUI_AVAILABLE:
             self.chk_sys_mem.setChecked(True)
             self.chk_sys_mem.toggled.connect(self.update_plot)
 
+            self.chk_cpu_breakdown = QCheckBox("CPU Breakdown")
+            self.chk_cpu_breakdown.setChecked(False)
+            self.chk_cpu_breakdown.toggled.connect(self.update_plot)
+
             self.search_input = QLineEdit()
             self.search_input.setPlaceholderText("Filter PID or process name...")
             self.search_input.textChanged.connect(self._filter_process_table)
@@ -3421,6 +3612,7 @@ if GUI_AVAILABLE:
 
             tb_layout.addWidget(self.chk_sys_cpu)
             tb_layout.addWidget(self.chk_sys_mem)
+            tb_layout.addWidget(self.chk_cpu_breakdown)
             tb_layout.addWidget(self.search_input, stretch=1)
             tb_layout.addWidget(self.chk_regex)
             tb_layout.addWidget(self.btn_open_browser)
@@ -3865,7 +4057,8 @@ if GUI_AVAILABLE:
                 data=self.current_parsed,
                 selected_pids=selected_pids,
                 plot_sys_cpu=self.chk_sys_cpu.isChecked(),
-                plot_sys_mem=self.chk_sys_mem.isChecked()
+                plot_sys_mem=self.chk_sys_mem.isChecked(),
+                plot_cpu_breakdown=self.chk_cpu_breakdown.isChecked() if hasattr(self, 'chk_cpu_breakdown') else False
             )
 
         def open_in_browser(self):
@@ -3900,6 +4093,7 @@ if GUI_AVAILABLE:
                 selected_pids=self.get_selected_pids(),
                 plot_sys_cpu=self.chk_sys_cpu.isChecked(),
                 plot_sys_mem=self.chk_sys_mem.isChecked(),
+                plot_cpu_breakdown=self.chk_cpu_breakdown.isChecked() if hasattr(self, 'chk_cpu_breakdown') else False,
                 theme_name=self.current_theme
             )
             self.statusBar().showMessage(f"Report exported to {file_path}")

@@ -839,6 +839,78 @@ def test_qt_theme_aware_widgets():
     win.close()
 
 
+def test_cpu_breakdown_traces_in_plotly():
+    """Verify CPU breakdown traces (%user, %sys, etc.) appear in Plotly figure."""
+    import top_plot_v2 as tp
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(timestamp="T1", cpu_metrics={"%cpu_total": 600.0, "%user": 200.0, "%sys": 150.0, "%nice": 50.0, "%idle": 200.0, "%irq": 10.0, "%sirq": 5.0, "%iow": 15.0, "%cpu_capacity": 800.0}),
+        tp.Snapshot(timestamp="T2", cpu_metrics={"%cpu_total": 500.0, "%user": 180.0, "%sys": 120.0, "%nice": 40.0, "%idle": 300.0, "%irq": 8.0, "%sirq": 4.0, "%iow": 10.0, "%cpu_capacity": 800.0}),
+    ])
+    gen = tp.PlotlyHtmlGenerator(data)
+    fig = gen.create_figure(plot_cpu_breakdown=True)
+    trace_names = [t.name for t in fig.data]
+    assert "CPU %user" in trace_names, f"Missing CPU %user trace. Found: {trace_names}"
+    assert "CPU %sys" in trace_names, f"Missing CPU %sys trace. Found: {trace_names}"
+    assert "CPU %iow" in trace_names, f"Missing CPU %iow trace. Found: {trace_names}"
+
+
+def test_cpu_breakdown_in_html_and_standalone():
+    """Verify CPU Breakdown controls and traces exist in generated HTML and standalone app."""
+    import tempfile
+    import os
+    import top_plot_v2 as tp
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(timestamp="T1", cpu_metrics={"%cpu_total": 600.0, "%user": 200.0, "%sys": 150.0, "%nice": 50.0, "%idle": 200.0, "%irq": 10.0, "%sirq": 5.0, "%iow": 15.0, "%cpu_capacity": 800.0}),
+    ])
+    gen = tp.PlotlyHtmlGenerator(data)
+    html_content = gen.generate_html(plot_cpu_breakdown=True)
+    assert "chkCpuBreakdown" in html_content
+    assert "CPU Breakdown" in html_content
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        standalone_path = os.path.join(tmpdir, "app.html")
+        tp.build_standalone_app(standalone_path)
+        with open(standalone_path, "r", encoding="utf-8") as f:
+            app_html = f.read()
+        assert "chkCpuBreakdown" in app_html
+        assert "CPU Breakdown" in app_html
+
+
+def test_qt_cpu_breakdown():
+    """Verify Qt canvas and main window support CPU breakdown toggle."""
+    import os
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    import top_plot_v2 as tp
+    import pytest
+    if not tp.GUI_AVAILABLE:
+        pytest.skip("PySide6 not available")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(timestamp="T1", cpu_metrics={"%cpu_total": 600.0, "%user": 200.0, "%sys": 150.0, "%nice": 50.0, "%idle": 200.0, "%irq": 10.0, "%sirq": 5.0, "%iow": 15.0, "%cpu_capacity": 800.0}),
+        tp.Snapshot(timestamp="T2", cpu_metrics={"%cpu_total": 500.0, "%user": 180.0, "%sys": 120.0, "%nice": 40.0, "%idle": 300.0, "%irq": 8.0, "%sirq": 4.0, "%iow": 10.0, "%cpu_capacity": 800.0}),
+    ])
+    canvas = tp.MplTelemetryCanvas()
+    canvas.plot_telemetry(data, plot_cpu_breakdown=True)
+    legend = canvas.ax_cpu.get_legend()
+    assert legend is not None
+    labels = [t.get_text() for t in legend.get_texts()]
+    assert "CPU %user" in labels
+    assert "CPU %sys" in labels
+    assert "CPU %iow" in labels
+
+    # Also test main window has chk_cpu_breakdown
+    win = tp.TopPlotMainWindow()
+    assert hasattr(win, "chk_cpu_breakdown")
+    assert win.chk_cpu_breakdown.text() == "CPU Breakdown"
+    assert not win.chk_cpu_breakdown.isChecked()
+    win.close()
+
+
+
+
 
 
 
