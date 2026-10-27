@@ -975,6 +975,104 @@ def test_qt_swap():
     win.close()
 
 
+def test_shr_column_in_table():
+    """Verify SHR column exists in the Qt process table."""
+    import top_plot_v2 as tp
+    import pytest
+    if not tp.GUI_AVAILABLE:
+        pytest.skip("PySide6 not available")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    win = tp.TopPlotMainWindow()
+    headers = [win.process_table.horizontalHeaderItem(i).text()
+               for i in range(win.process_table.columnCount())]
+    assert "Peak SHR (MB)" in headers, f"SHR column missing. Headers: {headers}"
+    assert win.process_table.columnCount() == 9
+    win.close()
+
+
+def test_shr_data_in_qt_process_table():
+    """Verify SHR data is correctly populated into column 7 of Qt process table."""
+    import top_plot_v2 as tp
+    import pytest
+    if not tp.GUI_AVAILABLE:
+        pytest.skip("PySide6 not available")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    win = tp.TopPlotMainWindow()
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(
+            timestamp="T1",
+            processes={
+                100: tp.ProcessRecord(pid=100, user="u1", virt_mb=100.0, res_mb=50.0, shr_mb=32.5, state="S", cpu=10.0, mem_pct=2.5, time_plus="0:01", args="app1")
+            }
+        )
+    ])
+    win.populate_process_table(data)
+    assert win.process_table.rowCount() == 1
+    # Check column 6: Peak RES
+    assert win.process_table.item(0, 6).text() == "50.0"
+    # Check column 7: Peak SHR
+    assert win.process_table.item(0, 7).text() == "32.5"
+    assert win.process_table.item(0, 7).sort_value == 32.5
+    # Check column 8: %MEM
+    assert win.process_table.item(0, 8).text() == "2.5%"
+    assert win.process_table.item(0, 8).sort_value == 2.5
+    win.close()
+
+
+def test_get_pid_metrics_max_shr():
+    """Verify get_pid_metrics returns max_shr_mb."""
+    import top_plot_v2 as tp
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(
+            timestamp="T1",
+            processes={
+                100: tp.ProcessRecord(pid=100, user="u1", virt_mb=100.0, res_mb=50.0, shr_mb=32.5, state="S", cpu=10.0, mem_pct=2.5, time_plus="0:01", args="app1")
+            }
+        ),
+        tp.Snapshot(
+            timestamp="T2",
+            processes={
+                100: tp.ProcessRecord(pid=100, user="u1", virt_mb=100.0, res_mb=50.0, shr_mb=45.0, state="S", cpu=10.0, mem_pct=2.5, time_plus="0:02", args="app1")
+            }
+        ),
+    ])
+    metrics = data.get_pid_metrics(100)
+    assert metrics["max_shr_mb"] == 45.0
+    assert metrics["shr_mb"] == [32.5, 45.0]
+
+
+def test_shr_in_html_and_standalone():
+    """Verify SHR column exists in generated HTML and standalone app."""
+    import os
+    import tempfile
+    import top_plot_v2 as tp
+
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(
+            timestamp="T1",
+            processes={
+                100: tp.ProcessRecord(pid=100, user="u1", virt_mb=100.0, res_mb=50.0, shr_mb=25.0, state="S", cpu=10.0, mem_pct=2.0, time_plus="0:01", args="app1")
+            }
+        )
+    ])
+    gen = tp.PlotlyHtmlGenerator(data)
+    html_content = gen.generate_html()
+    assert "Peak SHR (MB)" in html_content
+    assert "25.0 MB" in html_content
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        standalone_path = os.path.join(tmpdir, "app.html")
+        tp.build_standalone_app(standalone_path)
+        with open(standalone_path, "r", encoding="utf-8") as f:
+            app_html = f.read()
+        assert "Peak SHR (MB)" in app_html
+        assert "max_shr_mb" in app_html or "shr_mb" in app_html
+
+
+
 
 
 

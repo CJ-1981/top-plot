@@ -121,6 +121,7 @@ class ParsedLogV2:
         max_cpu = max(cpu_series) if cpu_series else 0.0
         avg_cpu = (sum(cpu_series) / len(cpu_series)) if cpu_series else 0.0
         max_res = max(res_series) if res_series else 0.0
+        max_shr = max(shr_series) if shr_series else 0.0
 
         return {
             "pid": pid,
@@ -131,7 +132,8 @@ class ParsedLogV2:
             "mem_pct": mem_pct_series,
             "max_cpu": max_cpu,
             "avg_cpu": avg_cpu,
-            "max_res_mb": max_res
+            "max_res_mb": max_res,
+            "max_shr_mb": max_shr
         }
 
     def get_top_pids_by_cpu(self, limit: int = 10) -> List[Tuple[int, str, float]]:
@@ -738,6 +740,7 @@ class PlotlyHtmlGenerator:
             avg_cpu = sum(cpu_vals) / len(cpu_vals) if cpu_vals else 0.0
             mem_pct_vals = m.get("mem_pct", [0.0])
             max_mem_pct = max(mem_pct_vals) if mem_pct_vals else 0.0
+            max_shr = max(m["shr_mb"]) if m.get("shr_mb") else 0.0
             checked_attr = "checked" if pid in selected_set else ""
 
             args_esc = html.escape(m["args"])
@@ -752,6 +755,7 @@ class PlotlyHtmlGenerator:
                 f'<td class="num-cell highlight-cpu" data-val="{m["max_cpu"]:.2f}">{m["max_cpu"]:.1f}%</td>'
                 f'<td class="num-cell" data-val="{avg_cpu:.2f}">{avg_cpu:.1f}%</td>'
                 f'<td class="num-cell highlight-mem" data-val="{m["max_res_mb"]:.2f}">{m["max_res_mb"]:.1f} MB</td>'
+                f'<td class="num-cell" data-val="{max_shr:.2f}">{max_shr:.1f} MB</td>'
                 f'<td class="num-cell" data-val="{max_mem_pct:.2f}">{max_mem_pct:.1f}%</td>'
                 f'</tr>'
             )
@@ -1189,7 +1193,8 @@ class PlotlyHtmlGenerator:
               <th class="sortable" data-col="4" data-type="num" style="text-align: right;">Max CPU% <span class="sort-icon">▲▼</span></th>
               <th class="sortable" data-col="5" data-type="num" style="text-align: right;">Avg CPU% <span class="sort-icon">▲▼</span></th>
               <th class="sortable" data-col="6" data-type="num" style="text-align: right;">Peak RES (MB) <span class="sort-icon">▲▼</span></th>
-              <th class="sortable" data-col="7" data-type="num" style="text-align: right;">Max MEM% <span class="sort-icon">▲▼</span></th>
+              <th class="sortable" data-col="7" data-type="num" style="text-align: right;">Peak SHR (MB) <span class="sort-icon">▲▼</span></th>
+              <th class="sortable" data-col="8" data-type="num" style="text-align: right;">Max MEM% <span class="sort-icon">▲▼</span></th>
             </tr>
           </thead>
           <tbody>
@@ -2067,7 +2072,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
                 <th class="sortable" data-col="4" data-type="num" style="text-align: right;">Max CPU% <span class="sort-icon">▲▼</span></th>
                 <th class="sortable" data-col="5" data-type="num" style="text-align: right;">Avg CPU% <span class="sort-icon">▲▼</span></th>
                 <th class="sortable" data-col="6" data-type="num" style="text-align: right;">Peak RES (MB) <span class="sort-icon">▲▼</span></th>
-                <th class="sortable" data-col="7" data-type="num" style="text-align: right;">Max MEM% <span class="sort-icon">▲▼</span></th>
+                <th class="sortable" data-col="7" data-type="num" style="text-align: right;">Peak SHR (MB) <span class="sort-icon">▲▼</span></th>
+                <th class="sortable" data-col="8" data-type="num" style="text-align: right;">Max MEM% <span class="sort-icon">▲▼</span></th>
               </tr>
             </thead>
             <tbody id="processTableBody"></tbody>
@@ -2163,6 +2169,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
                 pidData[pid].cpu.push(0.0);
                 const lastRes = pidData[pid].res_mb.length ? pidData[pid].res_mb[pidData[pid].res_mb.length - 1] : 0.0;
                 pidData[pid].res_mb.push(lastRes);
+                const lastShr = pidData[pid].shr_mb.length ? pidData[pid].shr_mb[pidData[pid].shr_mb.length - 1] : 0.0;
+                pidData[pid].shr_mb.push(lastShr);
                 pidData[pid].mem_pct.push(0.0);
               }
             }
@@ -2224,6 +2232,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
             const pid = parseInt(pMatch[1], 10);
             const user = pMatch[2];
             const resMb = parseMemoryMb(pMatch[6]);
+            const shrMb = parseMemoryMb(pMatch[7]);
             const cpu = parseFloat(pMatch[9]);
             const memPct = parseFloat(pMatch[10]);
             const args = pMatch[12].trim();
@@ -2235,17 +2244,21 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
                 args: args,
                 cpu: new Array(timestamps.length).fill(0.0),
                 res_mb: new Array(timestamps.length).fill(0.0),
+                shr_mb: new Array(timestamps.length).fill(0.0),
                 mem_pct: new Array(timestamps.length).fill(0.0),
                 max_cpu: 0.0,
-                max_res_mb: 0.0
+                max_res_mb: 0.0,
+                max_shr_mb: 0.0
               };
             }
 
             pidData[pid].cpu.push(cpu);
             pidData[pid].res_mb.push(resMb);
+            pidData[pid].shr_mb.push(shrMb);
             pidData[pid].mem_pct.push(memPct);
             if (cpu > pidData[pid].max_cpu) pidData[pid].max_cpu = cpu;
             if (resMb > pidData[pid].max_res_mb) pidData[pid].max_res_mb = resMb;
+            if (shrMb > pidData[pid].max_shr_mb) pidData[pid].max_shr_mb = shrMb;
             if (args && args.length > pidData[pid].args.length) pidData[pid].args = args;
             currentPidsInSnapshot[pid] = true;
           }
@@ -2269,6 +2282,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
             pidData[pid].cpu.push(0.0);
             const lastRes = pidData[pid].res_mb.length ? pidData[pid].res_mb[pidData[pid].res_mb.length - 1] : 0.0;
             pidData[pid].res_mb.push(lastRes);
+            const lastShr = pidData[pid].shr_mb.length ? pidData[pid].shr_mb[pidData[pid].shr_mb.length - 1] : 0.0;
+            pidData[pid].shr_mb.push(lastShr);
             pidData[pid].mem_pct.push(0.0);
           }
         }
@@ -2518,6 +2533,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         const isChecked = initialChecked.has(pid);
         const avgCpu = p.cpu.length ? (p.cpu.reduce((a, b) => a + b, 0) / p.cpu.length) : 0.0;
         const maxMemPct = p.mem_pct.length ? Math.max(...p.mem_pct) : 0.0;
+        const maxShrMb = p.max_shr_mb !== undefined ? p.max_shr_mb : (p.shr_mb && p.shr_mb.length ? Math.max(...p.shr_mb) : 0.0);
 
         const tr = document.createElement("tr");
         tr.setAttribute("data-pid", pid);
@@ -2529,6 +2545,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           <td class="num-cell highlight-cpu" data-val="${p.max_cpu.toFixed(2)}">${p.max_cpu.toFixed(1)}%</td>
           <td class="num-cell" data-val="${avgCpu.toFixed(2)}">${avgCpu.toFixed(1)}%</td>
           <td class="num-cell highlight-mem" data-val="${p.max_res_mb.toFixed(2)}">${p.max_res_mb.toFixed(1)} MB</td>
+          <td class="num-cell" data-val="${maxShrMb.toFixed(2)}">${maxShrMb.toFixed(1)} MB</td>
           <td class="num-cell" data-val="${maxMemPct.toFixed(2)}">${maxMemPct.toFixed(1)}%</td>
         `;
         tbody.appendChild(tr);
@@ -3759,9 +3776,9 @@ if GUI_AVAILABLE:
             proc_layout.addLayout(tbl_actions)
 
             self.process_table = QTableWidget()
-            self.process_table.setColumnCount(8)
+            self.process_table.setColumnCount(9)
             self.process_table.setHorizontalHeaderLabels([
-                "Plot", "PID", "Process / ARGS", "User", "Max CPU%", "Avg CPU%", "Peak RES (MB)", "%MEM"
+                "Plot", "PID", "Process / ARGS", "User", "Max CPU%", "Avg CPU%", "Peak RES (MB)", "Peak SHR (MB)", "%MEM"
             ])
             self.process_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
             self.process_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -4046,11 +4063,17 @@ if GUI_AVAILABLE:
                 res_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.process_table.setItem(row, 6, res_item)
 
-                # Col 7: %MEM
+                # Col 7: Peak SHR (MB)
+                max_shr = max(m["shr_mb"]) if m["shr_mb"] else 0.0
+                shr_item = SortableTableWidgetItem(f"{max_shr:.1f}", sort_value=float(max_shr))
+                shr_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.process_table.setItem(row, 7, shr_item)
+
+                # Col 8: %MEM
                 mem_pct = max(m["mem_pct"]) if m["mem_pct"] else 0.0
                 mem_item = SortableTableWidgetItem(f"{mem_pct:.1f}%", sort_value=float(mem_pct))
                 mem_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.process_table.setItem(row, 7, mem_item)
+                self.process_table.setItem(row, 8, mem_item)
 
             self.process_table.blockSignals(False)
             self.process_table.setSortingEnabled(True)
