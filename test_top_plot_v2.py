@@ -1165,6 +1165,8 @@ def test_export_controls_in_standalone_and_qt():
         win = tp.TopPlotMainWindow()
         assert hasattr(win, "btn_export_csv")
         assert hasattr(win, "export_csv")
+        assert hasattr(win, "btn_export_json")
+        assert hasattr(win, "export_json")
         data = tp.ParsedLogV2(snapshots=[
             tp.Snapshot(
                 timestamp="T1",
@@ -1176,15 +1178,25 @@ def test_export_controls_in_standalone_and_qt():
         win.current_parsed = data
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
             q_csv_path = f.name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            q_json_path = f.name
         try:
             win.export_csv(file_path=q_csv_path)
             assert os.path.exists(q_csv_path)
             with open(q_csv_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            assert "proc_a" in content
+                csv_content = f.read()
+            assert "proc_a" in csv_content
+
+            win.export_json(file_path=q_json_path)
+            assert os.path.exists(q_json_path)
+            with open(q_json_path, "r", encoding="utf-8") as f:
+                json_content = f.read()
+            assert "proc_a" in json_content
         finally:
             if os.path.exists(q_csv_path):
                 os.unlink(q_csv_path)
+            if os.path.exists(q_json_path):
+                os.unlink(q_json_path)
 
 
 def test_standalone_html_has_spinner_and_toast():
@@ -2057,3 +2069,443 @@ console.log(JSON.stringify({
             os.unlink(temp_js)
 
 
+
+
+def test_qt_hover_tooltip_bounds_check():
+    """Verify MplTelemetryCanvas.get_hover_tooltip_text safely handles metric lists shorter than timestamps."""
+    import top_plot_v2 as tp
+    if not tp.GUI_AVAILABLE:
+        return
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    win = tp.TopPlotMainWindow()
+    canvas = win.plot_canvas
+
+    # Create data where system_metrics lists are shorter than timestamps
+    data = tp.ParsedLogV2(snapshots=[
+        tp.Snapshot(
+            timestamp="20260917_10-00-00",
+            cpu_metrics={"%cpu_total": 50.0},
+            mem_metrics={"mem_used_mb": 1000.0},
+            processes={}
+        ),
+        tp.Snapshot(
+            timestamp="20260917_10-00-01",
+            cpu_metrics={},
+            mem_metrics={},
+            processes={}
+        )
+    ])
+    # Force system_metrics to have only 1 element while timestamps has 2 elements
+    data.system_metrics["%cpu_total"] = [50.0]
+    data.system_metrics["mem_used_mb"] = [1000.0]
+    data.system_metrics["swap_used_mb"] = [200.0]
+    data.system_metrics["%user"] = [25.0]
+    canvas._current_data = data
+    canvas._plot_sys_cpu = True
+    canvas._plot_sys_mem = True
+    canvas._plot_cpu_breakdown = True
+    canvas._plot_sys_swap = True
+
+    # Index 1 is out of bounds for the 1-element metric lists, should not raise IndexError
+    tooltip_text = canvas.get_hover_tooltip_text(1)
+    assert "0.0%" in tooltip_text
+    assert "0.0 MB" in tooltip_text
+
+
+def test_standalone_js_batch_file_drop_error_recovery():
+    """Verify batch file drop does not abort remaining valid files when one file suffers a read error."""
+    import top_plot_v2 as tp
+    import pytest
+    import os, tempfile, subprocess, json, shutil
+
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for JS batch drop error recovery test")
+
+    out = os.path.join(tempfile.gettempdir(), "test_js_batch_err.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
+
+    mock_prefix = """
+global.lastPlotCall = null;
+global.lastReactCall = null;
+global.lastRelayoutCall = null;
+
+const createMockElem = (initialClasses = []) => {
+    const classes = new Set(initialClasses);
+    const listeners = {};
+    return {
+        style: {},
+        checked: true,
+        textContent: '',
+        innerHTML: '',
+        classList: {
+            toggle: () => {},
+            add: (c) => classes.add(c),
+            remove: (c) => classes.delete(c),
+            contains: (c) => classes.has(c)
+        },
+        getAttribute: () => '',
+        setAttribute: () => {},
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        appendChild: () => {},
+        addEventListener: () => {}
+    };
+};
+
+const elements = {
+    currentSessionTitle: createMockElem(),
+    snapshotBadge: createMockElem(),
+    processBadge: createMockElem(),
+    telemetryView: createMockElem(),
+    telemetry_plot: { data: [], layout: {}, style: {}, on: () => {}, removeAllListeners: () => {} },
+    chkSysMem: createMockElem(),
+    chkSysCpu: createMockElem(),
+    chkSysSwap: createMockElem(),
+    chkCpuBreakdown: createMockElem(),
+    processTableBody: createMockElem(),
+    tableRowCount: createMockElem(),
+    thMasterCheck: createMockElem(),
+    btnAddMarker: createMockElem(),
+    btnClearMarkers: createMockElem(),
+    sessionPills: createMockElem(),
+    meminfoPanel: createMockElem(),
+    meminfoTableBody: createMockElem()
+};
+
+global.Plotly = {
+    newPlot: () => {},
+    react: () => {},
+    relayout: () => {}
+};
+
+global.document = {
+    createElement: () => createMockElem(),
+    getElementById: (id) => elements[id] || createMockElem(),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: {
+        getAttribute: () => 'Dark Fusion',
+        setAttribute: () => {}
+    }
+};
+global.window = { addEventListener: () => {} };
+
+const appendedToasts = [];
+elements.toastContainer = {
+    style: {},
+    appendChild: (child) => { appendedToasts.push(child); }
+};
+global.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+global.FileReader = class {
+    readAsText(file, encoding) {
+        if (file.shouldFail) {
+            setTimeout(() => {
+                if (this.onerror) this.onerror();
+            }, 10);
+        } else {
+            setTimeout(() => {
+                if (this.onload) this.onload({ target: { result: file.content } });
+            }, 10);
+        }
+    }
+};
+"""
+
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
+
+    test_harness = r"""
+const validTopContent = [
+  "20260917_17-33-01",
+  "800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps"
+].join("\n");
+
+const files = [
+    { name: "corrupt.log", shouldFail: true },
+    { name: "log_top@session_ok.txt", content: validTopContent, shouldFail: false }
+];
+
+handleFiles(files);
+
+setTimeout(() => {
+    const loadedKeys = Object.keys(loadedSessions);
+    console.log(JSON.stringify({
+        loadedKeys,
+        toasts: appendedToasts.map(t => ({ text: t.textContent, className: t.className }))
+    }));
+}, 150);
+"""
+
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_batch_err.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
+
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert "session_ok" in res["loadedKeys"]
+        # Must show error toast for corrupt.log AND success toast for session_ok
+        err_toasts = [t for t in res["toasts"] if "toast-error" in (t.get("className") or "")]
+        assert any("corrupt.log" in (t.get("text") or "") for t in err_toasts)
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)
+
+
+def test_standalone_js_meminfo_stack_safety():
+    """Verify buildMeminfoPanel calculates min/max safely via reduce without stack overflow on large arrays."""
+    import top_plot_v2 as tp
+    import pytest
+    import os, tempfile, subprocess, json, shutil
+
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for meminfo stack safety test")
+
+    out = os.path.join(tempfile.gettempdir(), "test_js_meminfo.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
+
+    mock_prefix = """
+const createdRows = [];
+const createMockElem = () => ({
+    style: {},
+    innerHTML: '',
+    textContent: '',
+    checked: false,
+    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+    getAttribute: () => '',
+    setAttribute: () => {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    appendChild: (child) => createdRows.push(child)
+});
+const elements = {
+    meminfoPanel: createMockElem(),
+    meminfoTableBody: createMockElem()
+};
+global.document = {
+    getElementById: (id) => elements[id] || createMockElem(),
+    createElement: (tag) => createMockElem(),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: { getAttribute: () => 'Dark Fusion', setAttribute: () => {} }
+};
+global.window = { addEventListener: () => {} };
+"""
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
+
+    test_harness = """
+// 150,000 points - would exceed maximum call stack size with Math.min(...vals)
+const largeArr = new Array(150000).fill(500);
+largeArr[100] = 12.5; // min
+largeArr[50000] = 879.2; // max
+largeArr[149999] = 300.0; // latest
+
+const session = {
+    meminfo: {
+        meminfo_memavailable_mb: largeArr
+    }
+};
+
+let threw = false;
+try {
+    buildMeminfoPanel(session);
+} catch (err) {
+    threw = true;
+}
+
+console.log(JSON.stringify({
+    threw,
+    rowsCount: createdRows.length,
+    rowHtml: createdRows[0]?.innerHTML
+}));
+"""
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_meminfo_stack.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
+
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert res["threw"] is False, "buildMeminfoPanel threw call stack error on large array!"
+        assert res["rowsCount"] == 1
+        assert "12.50 MB" in res["rowHtml"]
+        assert "879.20 MB" in res["rowHtml"]
+        assert "300.00 MB" in res["rowHtml"]
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)
+
+
+def test_standalone_js_per_session_annotations():
+    """Verify annotations are isolated and preserved per session."""
+    import top_plot_v2 as tp
+    import pytest
+    import os, tempfile, subprocess, json, shutil
+
+    node_path = shutil.which("node")
+    if not node_path:
+        pytest.skip("Node.js not available for per-session annotations test")
+
+    out = os.path.join(tempfile.gettempdir(), "test_js_sess_ann.html")
+    tp.build_standalone_app(out)
+    with open(out, "r", encoding="utf-8") as f:
+        html = f.read()
+    os.unlink(out)
+
+    mock_prefix = """
+global.lastPlotCall = null;
+global.lastReactCall = null;
+global.lastRelayoutCall = null;
+
+const createMockElem = (initialClasses = []) => {
+    const classes = new Set(initialClasses);
+    return {
+        style: {},
+        checked: true,
+        textContent: '',
+        innerHTML: '',
+        classList: {
+            toggle: () => {},
+            add: (c) => classes.add(c),
+            remove: (c) => classes.delete(c),
+            contains: (c) => classes.has(c)
+        },
+        getAttribute: () => '',
+        setAttribute: () => {},
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        appendChild: () => {},
+        addEventListener: () => {}
+    };
+};
+
+const elements = {
+    currentSessionTitle: createMockElem(),
+    snapshotBadge: createMockElem(),
+    processBadge: createMockElem(),
+    telemetryView: createMockElem(),
+    telemetry_plot: { data: [], layout: {}, style: {}, on: () => {}, removeAllListeners: () => {} },
+    chkSysMem: createMockElem(),
+    chkSysCpu: createMockElem(),
+    chkSysSwap: createMockElem(),
+    chkCpuBreakdown: createMockElem(),
+    processTableBody: createMockElem(),
+    tableRowCount: createMockElem(),
+    thMasterCheck: createMockElem(),
+    btnAddMarker: createMockElem(),
+    btnClearMarkers: createMockElem()
+};
+
+global.Plotly = {
+    newPlot: (id, traces, layout) => {
+        elements.telemetry_plot.layout = layout;
+    },
+    react: () => {},
+    relayout: (div, update) => {
+        elements.telemetry_plot.layout = Object.assign({}, elements.telemetry_plot.layout, update);
+    }
+};
+
+global.document = {
+    createElement: () => createMockElem(),
+    getElementById: (id) => elements[id] || createMockElem(),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    body: {
+        getAttribute: () => 'Dark Fusion',
+        setAttribute: () => {}
+    }
+};
+global.window = { addEventListener: () => {} };
+"""
+
+    script_start = html.rfind("<script>")
+    script_end = html.rfind("</script>")
+    js_code = html[script_start + len("<script>"):script_end]
+
+    test_harness = r"""
+const testLog1 = [
+  "20260917_17-33-01",
+  "800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 1000 u0_a1        20   0  10G 100M  50M S 10.0   1.0  01:00.00 proc_1"
+].join("\n");
+
+const testLog2 = [
+  "20260917_18-00-00",
+  "800%cpu  50%user  10%nice  40%sys 700%idle   0%iow   0%irq   0%sirq   0%host",
+  "  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS",
+  " 2000 u0_a2        20   0  20G 200M 100M S 20.0   2.0  02:00.00 proc_2"
+].join("\n");
+
+loadedSessions["session_1"] = parseTopLog(testLog1, "session_1");
+loadedSessions["session_2"] = parseTopLog(testLog2, "session_2");
+
+// 1. Render Session 1 and add annotation
+renderSession("session_1");
+addAnnotation("20260917_17-33-01", "Session 1 Note");
+
+const sess1AnnCount = loadedSessions["session_1"].annotations.length;
+const sess1AnnText = loadedSessions["session_1"].annotations[0].text;
+const sess1BtnDisplay = elements.btnClearMarkers.style.display;
+
+// 2. Switch to Session 2 (has no annotations)
+renderSession("session_2");
+const sess2AnnCount = loadedSessions["session_2"].annotations.length;
+const sess2BtnDisplay = elements.btnClearMarkers.style.display;
+const sess2PlotAnnCount = elements.telemetry_plot.layout.annotations.length;
+
+// 3. Switch back to Session 1
+renderSession("session_1");
+const restoredAnnCount = loadedSessions["session_1"].annotations.length;
+const restoredPlotAnnCount = elements.telemetry_plot.layout.annotations.length;
+const restoredBtnDisplay = elements.btnClearMarkers.style.display;
+
+console.log(JSON.stringify({
+    sess1AnnCount,
+    sess1AnnText,
+    sess1BtnDisplay,
+    sess2AnnCount,
+    sess2BtnDisplay,
+    sess2PlotAnnCount,
+    restoredAnnCount,
+    restoredPlotAnnCount,
+    restoredBtnDisplay
+}));
+"""
+    temp_js = os.path.join(tempfile.gettempdir(), "test_runner_sess_ann.js")
+    with open(temp_js, "w", encoding="utf-8") as f:
+        f.write(mock_prefix + "\n" + js_code + "\n" + test_harness)
+
+    try:
+        proc = subprocess.run([node_path, temp_js], capture_output=True, text=True, encoding="utf-8", check=True)
+        res = json.loads(proc.stdout.strip().split("\n")[-1])
+        assert res["sess1AnnCount"] == 1
+        assert res["sess1AnnText"] == "Session 1 Note"
+        assert res["sess1BtnDisplay"] == "inline-flex"
+
+        assert res["sess2AnnCount"] == 0
+        assert res["sess2BtnDisplay"] == "none"
+        assert res["sess2PlotAnnCount"] == 0
+
+        assert res["restoredAnnCount"] == 1
+        assert res["restoredPlotAnnCount"] == 1
+        assert res["restoredBtnDisplay"] == "inline-flex"
+    finally:
+        if os.path.exists(temp_js):
+            os.unlink(temp_js)

@@ -2676,7 +2676,7 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
     let pidTraceMap = {};
     let sysTraceMap = {};
     let markerMode = false;
-    const annotations = [];
+    let annotations = [];
 
     function hexToRgba(hex, alpha) {
       if (!hex) return `rgba(16, 185, 129, ${alpha})`;
@@ -2922,6 +2922,10 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
       const session = loadedSessions[sessionKey];
       if (!session) return;
       activeSessionKey = sessionKey;
+
+      session.annotations = session.annotations || [];
+      annotations = session.annotations;
+      window.annotations = annotations;
 
       document.getElementById('currentSessionTitle').textContent = session.label;
       document.getElementById('snapshotBadge').textContent = `${session.timestamps.length} Snapshots`;
@@ -3237,8 +3241,8 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         hasData = true;
 
         const latest = vals[vals.length - 1];
-        const minVal = Math.min(...vals);
-        const maxVal = Math.max(...vals);
+        const minVal = vals.reduce((m, v) => (v < m ? v : m), vals[0]);
+        const maxVal = vals.reduce((m, v) => (v > m ? v : m), vals[0]);
 
         const metricName = k.replace(/^meminfo_/, '').replace(/_mb$/, '');
         const tr = document.createElement('tr');
@@ -3490,7 +3494,12 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
         }
       };
 
+      if (activeSessionKey && loadedSessions[activeSessionKey]) {
+        loadedSessions[activeSessionKey].annotations = loadedSessions[activeSessionKey].annotations || [];
+        annotations = loadedSessions[activeSessionKey].annotations;
+      }
       annotations.push(ann);
+      window.annotations = annotations;
 
       if (plotDiv && typeof Plotly !== 'undefined') {
         Plotly.relayout(plotDiv, { annotations: annotations });
@@ -3523,6 +3532,9 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
     const btnClearMarkers = document.getElementById('btnClearMarkers');
     btnClearMarkers?.addEventListener('click', () => {
       annotations.length = 0;
+      if (activeSessionKey && loadedSessions[activeSessionKey]) {
+        loadedSessions[activeSessionKey].annotations = [];
+      }
       const plotDiv = document.getElementById('telemetry_plot');
       if (plotDiv && typeof Plotly !== 'undefined') {
         Plotly.relayout(plotDiv, { annotations: [] });
@@ -3911,7 +3923,11 @@ Tasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie
           pending--;
           showToast(`Failed to parse: ${file.name} (read error)`, "error");
           if (pending === 0) {
-            hideSpinner();
+            if (Object.keys(fileBatch).length > 0) {
+              setTimeout(() => processFileBatch(fileBatch), 30);
+            } else {
+              hideSpinner();
+            }
           }
         };
         reader.readAsText(file, "utf-8");
@@ -4491,7 +4507,8 @@ if GUI_AVAILABLE:
             rows = []
 
             if self._plot_sys_cpu and "%cpu_total" in self._current_data.system_metrics:
-                cpu_val = self._current_data.system_metrics["%cpu_total"][idx]
+                vals = self._current_data.system_metrics.get("%cpu_total", [])
+                cpu_val = vals[idx] if idx < len(vals) else 0.0
                 rows.append(f'<tr><td style="color:{t["accent_cpu"]};font-weight:bold;">Sys Total CPU%:</td><td style="color:{t["accent_cpu"]};text-align:right;font-weight:bold;padding-left:14px;font-family:monospace;">{cpu_val:.1f}%</td></tr>')
 
             if self._plot_cpu_breakdown:
@@ -4506,16 +4523,19 @@ if GUI_AVAILABLE:
                 cpu_breakdown_colors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4"]
                 for b_idx, (m_key, m_label) in enumerate(cpu_breakdown_labels):
                     if m_key in self._current_data.system_metrics:
-                        b_val = self._current_data.system_metrics[m_key][idx]
+                        vals = self._current_data.system_metrics.get(m_key, [])
+                        b_val = vals[idx] if idx < len(vals) else 0.0
                         b_col = cpu_breakdown_colors[b_idx % len(cpu_breakdown_colors)]
                         rows.append(f'<tr><td style="color:{b_col};padding-left:10px;">{m_label}:</td><td style="color:{b_col};text-align:right;padding-left:14px;font-family:monospace;">{b_val:.1f}%</td></tr>')
 
             if self._plot_sys_mem and "mem_used_mb" in self._current_data.system_metrics:
-                mem_val = self._current_data.system_metrics["mem_used_mb"][idx]
+                vals = self._current_data.system_metrics.get("mem_used_mb", [])
+                mem_val = vals[idx] if idx < len(vals) else 0.0
                 rows.append(f'<tr><td style="color:{t["accent_mem"]};font-weight:bold;">Sys RAM Used:</td><td style="color:{t["accent_mem"]};text-align:right;font-weight:bold;padding-left:14px;font-family:monospace;">{mem_val:.1f} MB</td></tr>')
 
             if getattr(self, "_plot_sys_swap", False) and "swap_used_mb" in self._current_data.system_metrics:
-                swap_val = self._current_data.system_metrics["swap_used_mb"][idx]
+                vals = self._current_data.system_metrics.get("swap_used_mb", [])
+                swap_val = vals[idx] if idx < len(vals) else 0.0
                 rows.append(f'<tr><td style="color:#f43f5e;font-weight:bold;">Sys Swap Used:</td><td style="color:#f43f5e;text-align:right;font-weight:bold;padding-left:14px;font-family:monospace;">{swap_val:.1f} MB</td></tr>')
 
             colors = t["curve_colors"]
@@ -4827,6 +4847,9 @@ if GUI_AVAILABLE:
             self.btn_export_csv = QPushButton("📊 Export CSV")
             self.btn_export_csv.clicked.connect(self.export_csv)
 
+            self.btn_export_json = QPushButton("📋 Export JSON")
+            self.btn_export_json.clicked.connect(self.export_json)
+
             # Theme Selector Dropdown
             self.theme_combo = QComboBox()
             for t_name in THEMES.keys():
@@ -4843,6 +4866,7 @@ if GUI_AVAILABLE:
             tb_layout.addWidget(self.btn_open_browser)
             tb_layout.addWidget(self.btn_export_html)
             tb_layout.addWidget(self.btn_export_csv)
+            tb_layout.addWidget(self.btn_export_json)
             tb_layout.addWidget(QLabel("Theme:"))
             tb_layout.addWidget(self.theme_combo)
             right_layout.addLayout(tb_layout)
@@ -5382,6 +5406,23 @@ if GUI_AVAILABLE:
                     return
 
             self.current_parsed.to_csv(file_path)
+            self.statusBar().showMessage(f"Telemetry exported to {file_path}")
+
+        def export_json(self, file_path: Optional[str] = None):
+            """Export current telemetry data to a JSON file."""
+            if not self.current_parsed:
+                QMessageBox.warning(self, "No Data", "Please load a log file first.")
+                return
+
+            if not file_path or not isinstance(file_path, str):
+                default_name = f"{self.current_job.label}_telemetry.json" if self.current_job else "telemetry.json"
+                file_path, _ = QFileDialog.getSaveFileName(
+                    self, "Export Telemetry JSON", default_name, "JSON Files (*.json)"
+                )
+                if not file_path:
+                    return
+
+            self.current_parsed.to_json(file_path)
             self.statusBar().showMessage(f"Telemetry exported to {file_path}")
 
 
