@@ -60,6 +60,15 @@ const requiredTokens = [
   'id="btnMarkerDelete"',
   'initPlotResizeHandle',
   'showMarkerHoverMenu',
+  'id="btnTogglePidCpu"',
+  'id="btnTogglePidMem"',
+  'id="btnToggleArea"',
+  'id="chkPidCpu"',
+  'id="chkPidMem"',
+  'id="chkAreaMode"',
+  'toggleAllPidCpu',
+  'toggleAllPidMem',
+  'toggleAreaMode',
   'Plotly'
 ];
 

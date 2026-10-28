@@ -854,6 +854,9 @@
           <label class="toggle-label"><input type="checkbox" id="chkSysMem" checked /> <span>System RAM MB</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkCpuBreakdown" /> <span>CPU Breakdown</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkSysSwap" /> <span>System Swap MB</span></label>
+          <label class="toggle-label"><input type="checkbox" id="chkPidCpu" checked /> <span>PID CPU%</span></label>
+          <label class="toggle-label"><input type="checkbox" id="chkPidMem" checked /> <span>PID RAM MB</span></label>
+          <label class="toggle-label"><input type="checkbox" id="chkAreaMode" /> <span>Area Chart</span></label>
           <button type="button" class="btn" id="btnDownloadCsv">📊 Download CSV</button>
           <button type="button" class="btn" id="btnDownloadJson">📋 Download JSON</button>
           <button type="button" class="btn" id="btnExportPng">📸 Save PNG</button>
@@ -888,6 +891,9 @@
               <button type="button" class="btn" id="btnTop5Mem">Top 5 MEM</button>
               <button type="button" class="btn" id="btnSelectAll">Select All</button>
               <button type="button" class="btn" id="btnClearAll">Clear All</button>
+              <button type="button" class="btn btn-accent" id="btnTogglePidCpu" title="Toggle Show/Hide PID CPU curves">📉 PID CPU</button>
+              <button type="button" class="btn btn-accent" id="btnTogglePidMem" title="Toggle Show/Hide PID Memory curves">📊 PID RAM</button>
+              <button type="button" class="btn" id="btnToggleArea" title="Toggle Area Chart mode for PID CPU">⛰️ Area Chart</button>
             </div>
           </div>
         </div>
@@ -962,6 +968,11 @@
     let activeSessionKey = null;
     let pidTraceMap = {};
     let sysTraceMap = {};
+    let allPidCpuTraces = [];
+    let allPidMemTraces = [];
+    let showPidCpu = true;
+    let showPidMem = true;
+    let isAreaMode = false;
     let markerMode = false;
     let annotations = [];
     let dropSequenceCounter = 0;
@@ -1351,6 +1362,15 @@
       // 3. Processes (top 4 checked initially)
       const initialChecked = new Set(session.topCpuPids.slice(0, 4));
       const curveColors = theme.curve_colors;
+      allPidCpuTraces = [];
+      allPidMemTraces = [];
+
+      const chkPidCpuEl = document.getElementById('chkPidCpu');
+      showPidCpu = chkPidCpuEl ? chkPidCpuEl.checked : true;
+      const chkPidMemEl = document.getElementById('chkPidMem');
+      showPidMem = chkPidMemEl ? chkPidMemEl.checked : true;
+      const chkAreaModeEl = document.getElementById('chkAreaMode');
+      isAreaMode = chkAreaModeEl ? chkAreaModeEl.checked : false;
 
       session.allPids.forEach((pid, idx) => {
         const p = session.pidData[pid];
@@ -1360,23 +1380,28 @@
         const label = `PID ${pid} (${procTitle})`;
 
         const cpuIdx = traceIdx++;
+        allPidCpuTraces.push(cpuIdx);
         traces.push({
           x: session.timestamps,
           y: p.cpu,
           name: `${label} CPU%`,
           type: "scatter",
           mode: "lines",
-          line: { color: col, width: 2 },
+          line: { color: col, width: isAreaMode ? 1.5 : 2 },
+          fill: isAreaMode ? "tozeroy" : "none",
+          stackgroup: isAreaMode ? "pid_cpu_stack" : null,
+          fillcolor: hexToRgba(col, 0.25),
           hoverlabel: {
             bgcolor: theme.bg_card,
             bordercolor: col,
             font: { color: theme.fg_text, size: 11 }
           },
-          visible: isChecked,
+          visible: isChecked && showPidCpu,
           yaxis: "y"
         });
 
         const resIdx = traceIdx++;
+        allPidMemTraces.push(resIdx);
         traces.push({
           x: session.timestamps,
           y: p.res_mb,
@@ -1389,7 +1414,7 @@
             bordercolor: col,
             font: { color: theme.fg_text, size: 11 }
           },
-          visible: isChecked,
+          visible: isChecked && showPidMem,
           yaxis: "y2"
         });
 
@@ -1564,8 +1589,79 @@
       const traces = pidTraceMap[pid];
       const plotDiv = document.getElementById('telemetry_plot');
       if (traces && plotDiv && typeof Plotly !== 'undefined') {
-        Plotly.restyle(plotDiv, { visible: visible }, traces);
+        const toShow = [];
+        const toHide = [];
+        if (visible) {
+          if (showPidCpu) toShow.push(traces[0]);
+          else toHide.push(traces[0]);
+          if (showPidMem) toShow.push(traces[1]);
+          else toHide.push(traces[1]);
+        } else {
+          toHide.push(traces[0], traces[1]);
+        }
+        if (toShow.length > 0) Plotly.restyle(plotDiv, { visible: true }, toShow);
+        if (toHide.length > 0) Plotly.restyle(plotDiv, { visible: false }, toHide);
       }
+    }
+
+    function toggleAllPidCpu(forceState) {
+      showPidCpu = forceState !== undefined ? forceState : !showPidCpu;
+      const chk = document.getElementById('chkPidCpu');
+      if (chk) chk.checked = showPidCpu;
+      const btn = document.getElementById('btnTogglePidCpu');
+      if (btn) btn.classList.toggle('btn-accent', showPidCpu);
+
+      const targetTraces = [];
+      document.querySelectorAll('.proc-check').forEach(c => {
+        if (c.checked) {
+          const pid = parseInt(c.getAttribute('data-pid'), 10);
+          if (pidTraceMap[pid]) targetTraces.push(pidTraceMap[pid][0]);
+        }
+      });
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined' && targetTraces.length > 0) {
+        Plotly.restyle(plotDiv, { visible: showPidCpu }, targetTraces);
+      }
+      showToast(showPidCpu ? "Showing PID CPU curves" : "Hidden PID CPU curves", "info");
+    }
+
+    function toggleAllPidMem(forceState) {
+      showPidMem = forceState !== undefined ? forceState : !showPidMem;
+      const chk = document.getElementById('chkPidMem');
+      if (chk) chk.checked = showPidMem;
+      const btn = document.getElementById('btnTogglePidMem');
+      if (btn) btn.classList.toggle('btn-accent', showPidMem);
+
+      const targetTraces = [];
+      document.querySelectorAll('.proc-check').forEach(c => {
+        if (c.checked) {
+          const pid = parseInt(c.getAttribute('data-pid'), 10);
+          if (pidTraceMap[pid]) targetTraces.push(pidTraceMap[pid][1]);
+        }
+      });
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined' && targetTraces.length > 0) {
+        Plotly.restyle(plotDiv, { visible: showPidMem }, targetTraces);
+      }
+      showToast(showPidMem ? "Showing PID RAM curves" : "Hidden PID RAM curves", "info");
+    }
+
+    function toggleAreaMode(forceState) {
+      isAreaMode = forceState !== undefined ? forceState : !isAreaMode;
+      const chk = document.getElementById('chkAreaMode');
+      if (chk) chk.checked = isAreaMode;
+      const btn = document.getElementById('btnToggleArea');
+      if (btn) btn.classList.toggle('btn-accent', isAreaMode);
+
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined' && allPidCpuTraces && allPidCpuTraces.length > 0) {
+        Plotly.restyle(plotDiv, {
+          fill: isAreaMode ? "tozeroy" : "none",
+          stackgroup: isAreaMode ? "pid_cpu_stack" : null,
+          "line.width": isAreaMode ? 1.5 : 2
+        }, allPidCpuTraces);
+      }
+      showToast(isAreaMode ? "Enabled Area Chart mode" : "Disabled Area Chart mode", "info");
     }
 
     function bindTableEvents() {
@@ -1630,8 +1726,14 @@
           chk.checked = shouldCheck;
           const traces = pidTraceMap[pid];
           if (traces) {
-            if (shouldCheck) toShow.push(...traces);
-            else toHide.push(...traces);
+            if (shouldCheck) {
+              if (showPidCpu) toShow.push(traces[0]);
+              else toHide.push(traces[0]);
+              if (showPidMem) toShow.push(traces[1]);
+              else toHide.push(traces[1]);
+            } else {
+              toHide.push(traces[0], traces[1]);
+            }
           }
         }
       });
@@ -1735,6 +1837,15 @@
         Plotly.restyle(plotDiv, { visible: e.target.checked }, [sysTraceMap.sys_swap]);
       }
     });
+
+    document.getElementById('btnTogglePidCpu')?.addEventListener('click', () => toggleAllPidCpu());
+    document.getElementById('chkPidCpu')?.addEventListener('change', (e) => toggleAllPidCpu(e.target.checked));
+
+    document.getElementById('btnTogglePidMem')?.addEventListener('click', () => toggleAllPidMem());
+    document.getElementById('chkPidMem')?.addEventListener('change', (e) => toggleAllPidMem(e.target.checked));
+
+    document.getElementById('btnToggleArea')?.addEventListener('click', () => toggleAreaMode());
+    document.getElementById('chkAreaMode')?.addEventListener('change', (e) => toggleAreaMode(e.target.checked));
 
     // ==========================================
     // Pure Vanilla JS Zero-Dependency ZIP Builder
