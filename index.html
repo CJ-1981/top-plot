@@ -1583,48 +1583,104 @@
         masterCheck.checked = false;
         masterCheck.addEventListener('change', (e) => {
           const checked = e.target.checked;
-          document.querySelectorAll('#processTableBody tr').forEach(r => {
-            if (r.style.display !== 'none') {
-              const chk = r.querySelector('.proc-check');
-              if (chk && chk.checked !== checked) {
-                chk.checked = checked;
-                toggleTrace(parseInt(chk.getAttribute('data-pid'), 10), checked);
+          if (checked) {
+            const visiblePids = [];
+            document.querySelectorAll('#processTableBody tr').forEach(r => {
+              if (r.style.display !== 'none') {
+                visiblePids.push(parseInt(r.getAttribute('data-pid'), 10));
+              }
+            });
+            if (visiblePids.length > 30) {
+              const proceed = confirm(`Selecting all ${visiblePids.length} visible processes will draw ${visiblePids.length} curves and may slow down the chart. Are you sure you want to continue?`);
+              if (!proceed) {
+                masterCheck.checked = false;
+                return;
               }
             }
-          });
+            showSpinner(`Updating chart (${visiblePids.length} processes)...`);
+            setTimeout(() => {
+              try {
+                setTargetPidsChecked(visiblePids);
+              } finally {
+                hideSpinner();
+              }
+            }, 30);
+          } else {
+            showSpinner("Clearing process curves...");
+            setTimeout(() => {
+              try {
+                setTargetPidsChecked([]);
+              } finally {
+                hideSpinner();
+              }
+            }, 30);
+          }
         });
       }
     }
 
     function setTargetPidsChecked(targetPids) {
       const targetSet = new Set(targetPids);
+      const toShow = [];
+      const toHide = [];
       document.querySelectorAll('.proc-check').forEach(chk => {
         const pid = parseInt(chk.getAttribute('data-pid'), 10);
         const shouldCheck = targetSet.has(pid);
         if (chk.checked !== shouldCheck) {
           chk.checked = shouldCheck;
-          toggleTrace(pid, shouldCheck);
+          const traces = pidTraceMap[pid];
+          if (traces) {
+            if (shouldCheck) toShow.push(...traces);
+            else toHide.push(...traces);
+          }
         }
       });
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined') {
+        if (toShow.length > 0) Plotly.restyle(plotDiv, { visible: true }, toShow);
+        if (toHide.length > 0) Plotly.restyle(plotDiv, { visible: false }, toHide);
+      }
     }
 
     // Quick Action Buttons
     document.getElementById('btnTop5Cpu')?.addEventListener('click', () => {
       if (activeSessionKey && loadedSessions[activeSessionKey]) {
-        setTargetPidsChecked(loadedSessions[activeSessionKey].topCpuPids);
+        showSpinner("Plotting Top 5 CPU processes...");
+        setTimeout(() => {
+          try {
+            setTargetPidsChecked(loadedSessions[activeSessionKey].topCpuPids);
+          } finally {
+            hideSpinner();
+          }
+        }, 20);
       }
     });
 
     document.getElementById('btnTop5Mem')?.addEventListener('click', () => {
       if (activeSessionKey && loadedSessions[activeSessionKey]) {
-        setTargetPidsChecked(loadedSessions[activeSessionKey].topMemPids);
+        showSpinner("Plotting Top 5 MEM processes...");
+        setTimeout(() => {
+          try {
+            setTargetPidsChecked(loadedSessions[activeSessionKey].topMemPids);
+          } finally {
+            hideSpinner();
+          }
+        }, 20);
       }
     });
 
     document.getElementById('btnClearAll')?.addEventListener('click', () => {
-      setTargetPidsChecked([]);
-      const mc = document.getElementById('thMasterCheck');
-      if (mc) mc.checked = false;
+      showSpinner("Clearing process curves...");
+      setTimeout(() => {
+        try {
+          setTargetPidsChecked([]);
+          const mc = document.getElementById('thMasterCheck');
+          if (mc) mc.checked = false;
+          showToast("Cleared process selection", "info");
+        } finally {
+          hideSpinner();
+        }
+      }, 20);
     });
 
     document.getElementById('btnSelectAll')?.addEventListener('click', () => {
@@ -1634,9 +1690,21 @@
           visiblePids.push(parseInt(r.getAttribute('data-pid'), 10));
         }
       });
-      setTargetPidsChecked(visiblePids);
-      const mc = document.getElementById('thMasterCheck');
-      if (mc) mc.checked = true;
+      if (visiblePids.length > 30) {
+        const proceed = confirm(`Selecting all ${visiblePids.length} visible processes will draw ${visiblePids.length} curves and may slow down the chart. Are you sure you want to continue?`);
+        if (!proceed) return;
+      }
+      showSpinner(`Updating chart (${visiblePids.length} processes)...`);
+      setTimeout(() => {
+        try {
+          setTargetPidsChecked(visiblePids);
+          const mc = document.getElementById('thMasterCheck');
+          if (mc) mc.checked = true;
+          showToast(`Selected all ${visiblePids.length} visible processes`, "info");
+        } finally {
+          hideSpinner();
+        }
+      }, 30);
     });
 
     // System Metric Checkbox Toggles
