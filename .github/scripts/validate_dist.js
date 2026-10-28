@@ -51,6 +51,7 @@ const requiredTokens = [
   'clearAllSessions',
   'removeSession',
   'remove-session-btn',
+  'id="sourceFilesBadge"',
   'id="plotResizeHandle"',
   'class="plot-resize-handle"',
   'id="markerHoverMenu"',

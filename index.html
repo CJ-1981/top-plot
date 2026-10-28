@@ -845,6 +845,7 @@
       <div class="header-bar" style="margin-bottom: 12px;">
         <div class="title-group">
           <h2 id="currentSessionTitle" style="margin: 0; font-size: 1.15rem;">Session</h2>
+          <span class="badge" id="sourceFilesBadge" style="display: none; background: rgba(16,185,129,0.18); color: var(--accent-cpu); border: 1px solid var(--accent-cpu);" title="Merged source files"></span>
           <span class="badge" id="snapshotBadge">0 Snapshots</span>
           <span class="badge" id="processBadge">0 Processes</span>
         </div>
@@ -1215,6 +1216,20 @@
       window.annotations = annotations;
 
       document.getElementById('currentSessionTitle').textContent = session.label;
+      const filesBadge = document.getElementById('sourceFilesBadge');
+      if (filesBadge) {
+        if (session.sourceFiles && session.sourceFiles.length > 1) {
+          filesBadge.style.display = 'inline-flex';
+          filesBadge.textContent = '⚡ 2 Files Merged (CPU+MEM)';
+          filesBadge.title = 'Merged files: ' + session.sourceFiles.join(' + ');
+        } else if (session.sourceFiles && session.sourceFiles.length === 1) {
+          filesBadge.style.display = 'inline-flex';
+          filesBadge.textContent = '📄 1 File';
+          filesBadge.title = 'Source file: ' + session.sourceFiles[0];
+        } else {
+          filesBadge.style.display = 'none';
+        }
+      }
       document.getElementById('snapshotBadge').textContent = `${session.timestamps.length} Snapshots`;
       document.getElementById('processBadge').textContent = `${session.allPids.length} Processes`;
       document.getElementById('telemetryView').style.display = 'block';
@@ -2837,10 +2852,14 @@
             baseLabel: baseLabel,
             virtualPath: virtualPath,
             dropIndex: dropSequenceCounter,
+            sourceFiles: [],
             top: null,
             topmen: null,
             other: null
           };
+        }
+        if (!fileBatch[batchKey].sourceFiles.includes(file.name)) {
+          fileBatch[batchKey].sourceFiles.push(file.name);
         }
 
         const reader = new FileReader();
@@ -2905,9 +2924,11 @@
             sessionParsed.label = b.label;
             sessionParsed.virtualPath = b.virtualPath;
             sessionParsed.dropIndex = b.dropIndex;
+            sessionParsed.sourceFiles = b.sourceFiles || [];
             loadedSessions[batchKey] = sessionParsed;
             if (!firstNewKey) firstNewKey = batchKey;
-            showToast(`Loaded ${b.label} (${sessionParsed.timestamps.length} snapshots)`, "success");
+            const fileInfo = (b.sourceFiles && b.sourceFiles.length > 1) ? ` [merged ${b.sourceFiles.length} files]` : '';
+            showToast(`Loaded ${b.label}${fileInfo} (${sessionParsed.timestamps.length} snapshots)`, "success");
           } else {
             showToast(`Failed to parse: ${b.label} (no valid snapshots found)`, "error");
           }
@@ -2967,7 +2988,8 @@
         btn.setAttribute("data-key", k);
         const pillLabel = sess && sess.label ? sess.label : k;
         const sampleCount = sess && sess.timestamps ? sess.timestamps.length : 0;
-        btn.innerHTML = `📁 ${pillLabel} (${sampleCount} samples) <button class="rename-session-btn" title="Rename session" onclick="event.stopPropagation(); renameSession('${k}')">✏️</button><button class="remove-session-btn" title="Remove this session" onclick="event.stopPropagation(); removeSession('${k}')">✕</button>`;
+        const pairBadge = (sess && sess.sourceFiles && sess.sourceFiles.length > 1) ? ('<span style="font-size:0.75rem;opacity:0.85;margin-left:3px;" title="Paired: ' + sess.sourceFiles.join(' + ') + '">⚡(2 files)</span>') : '';
+        btn.innerHTML = `📁 ${pillLabel} (${sampleCount} samples)${pairBadge} <button class="rename-session-btn" title="Rename session" onclick="event.stopPropagation(); renameSession('${k}')">✏️</button><button class="remove-session-btn" title="Remove this session" onclick="event.stopPropagation(); removeSession('${k}')">✕</button>`;
         btn.addEventListener('click', () => {
           document.querySelectorAll('.session-pill').forEach(p => p.classList.toggle('active', p.getAttribute('data-key') === k));
           renderSession(k);
