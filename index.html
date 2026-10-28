@@ -593,6 +593,101 @@
       background-color: #f59e0b;
       border: 1px solid #d97706;
     }
+    .plot-resize-handle {
+      width: 100%;
+      height: 14px;
+      cursor: ns-resize;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      margin-top: 6px;
+      border-radius: 4px;
+      user-select: none;
+      transition: background-color 0.15s ease;
+    }
+    .plot-resize-handle:hover,
+    .plot-resize-handle.active {
+      background-color: var(--bg-header);
+    }
+    .resize-grip-bar {
+      width: 54px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      transition: background-color 0.15s ease, width 0.15s ease;
+    }
+    .plot-resize-handle:hover .resize-grip-bar,
+    .plot-resize-handle.active .resize-grip-bar {
+      background: var(--accent-cpu);
+      width: 72px;
+    }
+
+    /* Marker Hover Menu */
+    .marker-hover-menu {
+      position: fixed;
+      z-index: 9999;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      padding: 12px 14px;
+      min-width: 280px;
+      max-width: 380px;
+      font-size: 0.84rem;
+      color: var(--fg-text);
+      pointer-events: auto;
+      transition: opacity 0.15s ease;
+    }
+    .marker-menu-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+    .marker-menu-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      color: var(--accent-cpu);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.88rem;
+    }
+    .marker-menu-body {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 0.8rem;
+      margin-bottom: 10px;
+    }
+    .marker-metric-row {
+      display: flex;
+      justify-content: space-between;
+      color: var(--fg-muted);
+    }
+    .marker-metric-val {
+      font-family: monospace;
+      font-weight: 600;
+      color: var(--fg-text);
+    }
+    .marker-menu-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      padding-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+    .btn-sm {
+      padding: 4px 8px;
+      font-size: 0.76rem;
+    }
+
     .app-footer {
       margin-top: 36px;
       padding: 16px 4px;
@@ -685,6 +780,23 @@
     </div>
   </div>
 
+  <!-- Marker Details Hover Menu -->
+  <div id="markerHoverMenu" class="marker-hover-menu" style="display: none;">
+    <div class="marker-menu-header">
+      <div class="marker-menu-title">
+        <span>📌</span>
+        <strong id="markerMenuNote">Annotation Note</strong>
+      </div>
+      <span class="badge" id="markerMenuTimestamp" style="font-size: 0.72rem;">Timestamp</span>
+    </div>
+    <div class="marker-menu-body" id="markerMenuMetrics"></div>
+    <div class="marker-menu-actions">
+      <button type="button" class="btn btn-sm" id="btnMarkerEdit">✏️ Edit</button>
+      <button type="button" class="btn btn-sm btn-accent" id="btnMarkerDrill">🔬 Drilldown</button>
+      <button type="button" class="btn btn-sm btn-danger-outline" id="btnMarkerDelete">🗑️ Delete</button>
+    </div>
+  </div>
+
   <div class="dashboard-container">
     <!-- Header Bar -->
     <div class="header-bar">
@@ -751,6 +863,9 @@
 
       <div class="plot-box">
         <div id="telemetry_plot" style="width: 100%; height: 500px;"></div>
+        <div id="plotResizeHandle" class="plot-resize-handle" title="Drag to adjust plot height">
+          <div class="resize-grip-bar"></div>
+        </div>
       </div>
 
       <div class="table-panel">
@@ -2102,6 +2217,220 @@
 
     window.addAnnotation = addAnnotation;
     window.annotations = annotations;
+
+    // Marker Hover Menu & Plot Resize Logic
+    let activeMarkerHoverIdx = -1;
+    let markerHoverTimeout = null;
+
+    function showMarkerHoverMenu(annIdx, clientX, clientY) {
+      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const session = loadedSessions[activeSessionKey];
+      const annList = session.annotations || [];
+      const ann = annList[annIdx];
+      if (!ann) return;
+
+      activeMarkerHoverIdx = annIdx;
+      clearTimeout(markerHoverTimeout);
+
+      const menu = document.getElementById('markerHoverMenu');
+      if (!menu) return;
+
+      document.getElementById('markerMenuNote').textContent = ann.text || 'Annotation';
+      document.getElementById('markerMenuTimestamp').textContent = ann.x || '';
+
+      const metricsContainer = document.getElementById('markerMenuMetrics');
+      metricsContainer.innerHTML = '';
+
+      const tsIdx = session.timestamps ? session.timestamps.indexOf(ann.x) : -1;
+      if (tsIdx !== -1 && session.systemMetrics) {
+        const sys = session.systemMetrics;
+        const totalCpu = sys['%cpu_total'] ? sys['%cpu_total'][tsIdx] : null;
+        const userCpu = sys['%user'] ? sys['%user'][tsIdx] : null;
+        const sysCpu = sys['%sys'] ? sys['%sys'][tsIdx] : null;
+        const ramUsed = sys['mem_used_mb'] ? sys['mem_used_mb'][tsIdx] : null;
+        const swapUsed = sys['swap_used_mb'] ? sys['swap_used_mb'][tsIdx] : null;
+
+        let rowsHtml = '';
+        if (totalCpu !== null) {
+          const usrStr = userCpu !== null ? ` (usr: ${userCpu.toFixed(0)}%, sys: ${sysCpu.toFixed(0)}%)` : '';
+          rowsHtml += `<div class="marker-metric-row"><span>System CPU:</span><span class="marker-metric-val" style="color:var(--accent-cpu);">${totalCpu.toFixed(1)}%${usrStr}</span></div>`;
+        }
+        if (ramUsed !== null) {
+          rowsHtml += `<div class="marker-metric-row"><span>RAM Used:</span><span class="marker-metric-val" style="color:var(--accent-mem);">${ramUsed.toFixed(1)} MB</span></div>`;
+        }
+        if (swapUsed !== null && swapUsed > 0) {
+          rowsHtml += `<div class="marker-metric-row"><span>Swap Used:</span><span class="marker-metric-val" style="color:#f43f5e;">${swapUsed.toFixed(1)} MB</span></div>`;
+        }
+
+        if (session.pidData) {
+          const topAtTs = Object.keys(session.pidData).map(pid => {
+            const p = session.pidData[pid];
+            return { pid, cpu: (p.cpu && p.cpu[tsIdx]) || 0, res: (p.res_mb && p.res_mb[tsIdx]) || 0, args: p.args || '' };
+          }).sort((a, b) => b.cpu - a.cpu).slice(0, 2);
+
+          if (topAtTs.length > 0 && topAtTs[0].cpu > 0) {
+            rowsHtml += `<div style="margin-top:4px; font-weight:600; color:var(--fg-text);">Top Processes:</div>`;
+            topAtTs.forEach(tp => {
+              const shortName = tp.args.length > 24 ? tp.args.slice(0, 24) + '...' : tp.args;
+              rowsHtml += `<div class="marker-metric-row" style="font-size:0.76rem;"><span>${shortName}</span><span class="marker-metric-val">${tp.cpu.toFixed(1)}% | ${tp.res.toFixed(0)}M</span></div>`;
+            });
+          }
+        }
+        metricsContainer.innerHTML = rowsHtml;
+      } else {
+        metricsContainer.innerHTML = `<div class="marker-metric-row"><span>Timestamp:</span><span class="marker-metric-val">${ann.x}</span></div>`;
+      }
+
+      menu.style.display = 'block';
+      const menuWidth = menu.offsetWidth || 300;
+      const menuHeight = menu.offsetHeight || 180;
+      let left = clientX + 15;
+      let top = clientY - 20;
+
+      if (left + menuWidth > window.innerWidth - 10) {
+        left = clientX - menuWidth - 15;
+      }
+      if (top + menuHeight > window.innerHeight - 10) {
+        top = window.innerHeight - menuHeight - 10;
+      }
+      if (top < 10) top = 10;
+
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    }
+
+    function hideMarkerHoverMenu(delay = 180) {
+      clearTimeout(markerHoverTimeout);
+      markerHoverTimeout = setTimeout(() => {
+        const menu = document.getElementById('markerHoverMenu');
+        if (menu) menu.style.display = 'none';
+        activeMarkerHoverIdx = -1;
+      }, delay);
+    }
+
+    window.showMarkerHoverMenu = showMarkerHoverMenu;
+    window.hideMarkerHoverMenu = hideMarkerHoverMenu;
+
+    // Attach hover listener to telemetry_plot
+    const plotContainer = document.getElementById('telemetry_plot');
+    if (plotContainer && typeof plotContainer.addEventListener === 'function') {
+      plotContainer.addEventListener('mousemove', (e) => {
+        const annEl = e.target && typeof e.target.closest === 'function' ? e.target.closest('.annotation, .annotation-text, .annotation-point') : null;
+        if (annEl) {
+          const allAnn = typeof plotContainer.querySelectorAll === 'function' ? Array.from(plotContainer.querySelectorAll('.annotation')) : [];
+          const parentAnn = (typeof e.target.closest === 'function' && e.target.closest('.annotation')) || annEl;
+          const idx = allAnn.indexOf(parentAnn);
+          if (idx !== -1) {
+            showMarkerHoverMenu(idx, e.clientX, e.clientY);
+            return;
+          }
+        }
+        if (!e.target || typeof e.target.closest !== 'function' || !e.target.closest('#markerHoverMenu')) {
+          hideMarkerHoverMenu(180);
+        }
+      });
+    }
+
+    const hoverMenuEl = document.getElementById('markerHoverMenu');
+    if (hoverMenuEl && typeof hoverMenuEl.addEventListener === 'function') {
+      hoverMenuEl.addEventListener('mouseenter', () => clearTimeout(markerHoverTimeout));
+      hoverMenuEl.addEventListener('mouseleave', () => hideMarkerHoverMenu(180));
+    }
+
+    document.getElementById('btnMarkerDelete')?.addEventListener('click', () => {
+      if (activeMarkerHoverIdx === -1 || !activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const annList = loadedSessions[activeSessionKey].annotations || [];
+      if (activeMarkerHoverIdx >= 0 && activeMarkerHoverIdx < annList.length) {
+        annList.splice(activeMarkerHoverIdx, 1);
+        annotations = annList;
+        window.annotations = annotations;
+        const plotDiv = document.getElementById('telemetry_plot');
+        if (plotDiv && typeof Plotly !== 'undefined') {
+          Plotly.relayout(plotDiv, { annotations: annotations });
+        }
+        hideMarkerHoverMenu(0);
+        const btnClear = document.getElementById('btnClearMarkers');
+        if (btnClear) btnClear.style.display = annotations.length > 0 ? 'inline-flex' : 'none';
+        showToast("Marker removed", "info");
+      }
+    });
+
+    document.getElementById('btnMarkerEdit')?.addEventListener('click', () => {
+      if (activeMarkerHoverIdx === -1 || !activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const ann = (loadedSessions[activeSessionKey].annotations || [])[activeMarkerHoverIdx];
+      if (!ann) return;
+      const newText = prompt("Edit marker note:", ann.text || "");
+      if (newText !== null && newText.trim()) {
+        ann.text = newText.trim();
+        const plotDiv = document.getElementById('telemetry_plot');
+        if (plotDiv && typeof Plotly !== 'undefined') {
+          Plotly.relayout(plotDiv, { annotations: loadedSessions[activeSessionKey].annotations });
+        }
+        document.getElementById('markerMenuNote').textContent = ann.text;
+        showToast("Marker updated", "success");
+      }
+    });
+
+    document.getElementById('btnMarkerDrill')?.addEventListener('click', () => {
+      if (activeMarkerHoverIdx === -1 || !activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const session = loadedSessions[activeSessionKey];
+      const ann = (session.annotations || [])[activeMarkerHoverIdx];
+      if (!ann) return;
+      hideMarkerHoverMenu(0);
+      const tsIdx = session.timestamps ? session.timestamps.indexOf(ann.x) : -1;
+      let targetPid = null;
+      if (tsIdx !== -1 && session.pidData) {
+        const topPids = Object.keys(session.pidData).sort((a, b) => {
+          return ((session.pidData[b].cpu && session.pidData[b].cpu[tsIdx]) || 0) - ((session.pidData[a].cpu && session.pidData[a].cpu[tsIdx]) || 0);
+        });
+        if (topPids.length > 0) targetPid = topPids[0];
+      }
+      if (targetPid && window.showDrillDown) {
+        window.showDrillDown(targetPid);
+      }
+    });
+
+    // Plot Height Drag Resizer
+    (function initPlotResizeHandle() {
+      const handle = document.getElementById('plotResizeHandle');
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (!handle || !plotDiv || typeof handle.addEventListener !== 'function') return;
+
+      let isResizing = false;
+      let startY = 0;
+      let startHeight = 500;
+
+      handle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startY = e.clientY;
+        startHeight = plotDiv.offsetHeight || 500;
+        handle.classList.add('active');
+        document.body.style.cursor = 'ns-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        const delta = e.clientY - startY;
+        const newHeight = Math.max(300, Math.min(1800, startHeight + delta));
+        plotDiv.style.height = `${newHeight}px`;
+        if (window.Plotly && typeof Plotly.relayout === 'function' && plotDiv.layout) {
+          Plotly.relayout(plotDiv, { height: newHeight });
+        }
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!isResizing) return;
+        isResizing = false;
+        handle.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        if (window.Plotly && typeof Plotly.Plots?.resize === 'function') {
+          Plotly.Plots.resize(plotDiv);
+        }
+      });
+    })();
 
     const btnAddMarker = document.getElementById('btnAddMarker');
     btnAddMarker?.addEventListener('click', () => {

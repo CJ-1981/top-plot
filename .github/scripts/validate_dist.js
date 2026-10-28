@@ -51,6 +51,14 @@ const requiredTokens = [
   'clearAllSessions',
   'removeSession',
   'remove-session-btn',
+  'id="plotResizeHandle"',
+  'class="plot-resize-handle"',
+  'id="markerHoverMenu"',
+  'id="btnMarkerEdit"',
+  'id="btnMarkerDrill"',
+  'id="btnMarkerDelete"',
+  'initPlotResizeHandle',
+  'showMarkerHoverMenu',
   'Plotly'
 ];
 

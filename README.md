@@ -61,8 +61,9 @@ Export all loaded sessions simultaneously in one seamless operation:
 - **Swap & Shared Memory Tracking**: Trace process swap usage (`SWAP MB`) and shared memory (`SHR MB`) alongside Resident (`RES`) and Virtual (`VIRT`) allocations.
 - **`/proc/meminfo` System Memory Alignment**: Tracks system-wide memory pressure, correlating `MemTotal`, `MemFree`, `MemAvailable`, `Buffers`, `Cached`, and `SReclaimable`.
 - **Uncapped Hover Cards**: Full, untruncated process arguments and package names with instant metric readouts and cursor crosshairs.
-- **Timeline RangeSlider**: Pan and zoom smoothly across hours of high-frequency log samples with mini-overview maps.
-- **Interactive Annotations**: Double-click or trigger annotation markers to pinpoint thermal throttling, crashes, or system spikes.
+- **Timeline RangeSlider & Height Resizer**: Pan and zoom smoothly across hours of high-frequency log samples with mini-overview maps, plus an interactive vertical drag handle to freely adjust plot height from 300px to 1800px.
+- **Marker Inspection & Hover Menus**: Hover over any marker tag to display an instant telemetry card showing CPU breakdown, RAM, Swap, and top offending processes, with quick 1-click **Edit**, **Drilldown**, and **Delete** actions.
+- **Interactive Annotations & Zooming (Web & Desktop)**: Click or double-click to add annotations, use the mouse scroll wheel for bidirectional time-range zooming, and maintain clean dual-axis alignment across theme switches.
 
 ### 4. 🔬 Point-in-Time Process Snapshot Drilldown
 - Click any point on the telemetry timeline to open a modal inspection window detailing the exact system state at that microsecond:
