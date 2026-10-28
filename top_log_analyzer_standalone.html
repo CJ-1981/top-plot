@@ -194,11 +194,33 @@
     .file-input {
       display: none;
     }
+    .session-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
     .session-pills {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      margin-bottom: 16px;
+      margin-bottom: 0;
+    }
+    .progress-bar-container {
+      width: 100%;
+      height: 8px;
+      background: var(--bg-window);
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .progress-bar-fill {
+      width: 0%;
+      height: 100%;
+      background: var(--accent-cpu);
+      transition: width 0.2s ease;
     }
     .session-pill {
       background: var(--bg-header);
@@ -540,6 +562,44 @@
       </div>
     </div>
   </div>
+
+  <!-- Batch Export Modal -->
+  <div id="batchExportModal" class="modal-overlay" style="display: none;">
+    <div class="modal-container" style="max-width: 540px;">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="batchExportTitle" style="margin: 0; font-size: 1.15rem;">⚡ Batch Export All Sessions</h3>
+          <span class="badge" id="batchExportSessionCount">0 Sessions</span>
+        </div>
+        <button type="button" class="modal-close-btn" id="btnBatchExportClose" title="Close (Esc)">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <p style="margin-top: 0; color: var(--fg-muted); font-size: 0.9rem; line-height: 1.5;">
+          Export telemetry datasets and chart snapshots for all loaded sessions simultaneously. Each session will generate <code>chart.png</code>, <code>telemetry.csv</code>, and <code>telemetry.json</code> organized by virtual path folders.
+        </p>
+
+        <div style="display: flex; flex-direction: column; gap: 12px; margin: 20px 0;">
+          <button type="button" class="btn btn-accent" id="btnBatchExportFolder" style="justify-content: flex-start; padding: 12px 16px; font-size: 0.95rem;">
+            📁 Save to Local Folder <span style="font-size: 0.8rem; opacity: 0.8; margin-left: auto;">(Chrome / Edge / Opera)</span>
+          </button>
+          <button type="button" class="btn" id="btnBatchExportZip" style="justify-content: flex-start; padding: 12px 16px; font-size: 0.95rem; border: 1px solid var(--border);">
+            📦 Download ZIP Archive <span style="font-size: 0.8rem; opacity: 0.8; margin-left: auto;">(All Browsers / 100% Offline)</span>
+          </button>
+        </div>
+
+        <div id="batchExportStatusContainer" style="display: none; margin-top: 15px;">
+          <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 6px;">
+            <span id="batchExportStatusText">Processing...</span>
+            <span id="batchExportStatusPercent">0%</span>
+          </div>
+          <div class="progress-bar-container">
+            <div id="batchExportProgressBar" class="progress-bar-fill"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="dashboard-container">
     <!-- Header Bar -->
     <div class="header-bar">
@@ -573,8 +633,11 @@
       <input type="file" id="fileInput" class="file-input" multiple accept=".log,.txt" />
     </div>
 
-    <!-- Session Navigation Pills -->
-    <div id="sessionPills" class="session-pills" style="display: none;"></div>
+    <!-- Session Navigation Bar -->
+    <div id="sessionNav" class="session-nav" style="display: none;">
+      <div id="sessionPills" class="session-pills"></div>
+      <button type="button" class="btn btn-accent" id="btnBatchExportAll" title="Batch export PNG, CSV, and JSON for all loaded sessions">⚡ Batch Export All</button>
+    </div>
 
     <!-- Telemetry Dashboard -->
     <div id="telemetryView" style="display: none;">
@@ -678,6 +741,7 @@
     let sysTraceMap = {};
     let markerMode = false;
     let annotations = [];
+    let dropSequenceCounter = 0;
 
     function hexToRgba(hex, alpha) {
       if (!hex) return `rgba(16, 185, 129, ${alpha})`;
@@ -1367,10 +1431,179 @@
       }
     });
 
-    // CSV / JSON Export Handlers
-    function downloadCSV() {
-      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
-      const session = loadedSessions[activeSessionKey];
+    // ==========================================
+    // Pure Vanilla JS Zero-Dependency ZIP Builder
+    // ==========================================
+    const crc32Table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      crc32Table[i] = c >>> 0;
+    }
+
+    function calculateCrc32(data) {
+      let bytes;
+      if (typeof data === 'string') {
+        bytes = new TextEncoder().encode(data);
+      } else if (data instanceof Uint8Array) {
+        bytes = data;
+      } else if (data && data.buffer) {
+        bytes = new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength || data.length);
+      } else {
+        bytes = new Uint8Array(0);
+      }
+      let crc = 0xFFFFFFFF;
+      for (let i = 0; i < bytes.length; i++) {
+        crc = (crc >>> 8) ^ crc32Table[(crc ^ bytes[i]) & 0xFF];
+      }
+      return (crc ^ 0xFFFFFFFF) >>> 0;
+    }
+    window.calculateCrc32 = calculateCrc32;
+
+    function createSimpleZip(files) {
+      const encoder = new TextEncoder();
+      const fileEntries = files.map(f => {
+        const nameBytes = encoder.encode(f.name.split(String.fromCharCode(92)).join('/'));
+        let dataBytes;
+        if (typeof f.data === 'string') {
+          dataBytes = encoder.encode(f.data);
+        } else if (f.data instanceof Uint8Array) {
+          dataBytes = f.data;
+        } else if (f.data && f.data.buffer) {
+          dataBytes = new Uint8Array(f.data.buffer, f.data.byteOffset || 0, f.data.byteLength || f.data.length);
+        } else {
+          dataBytes = new Uint8Array(0);
+        }
+        const crc = calculateCrc32(dataBytes);
+        return { nameBytes, dataBytes, crc, size: dataBytes.length };
+      });
+
+      let totalSize = 0;
+      fileEntries.forEach(f => {
+        totalSize += 30 + f.nameBytes.length + f.size; // Local file header + name + content
+        totalSize += 46 + f.nameBytes.length;          // Central directory header + name
+      });
+      totalSize += 22; // End of central directory record (EOCD)
+
+      const buffer = new Uint8Array(totalSize);
+      const view = new DataView(buffer.buffer);
+      let localOffset = 0;
+      const centralEntries = [];
+
+      const now = new Date();
+      const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+      const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+
+      for (const f of fileEntries) {
+        const headerOffset = localOffset;
+        // Local file header: 0x04034b50 (PK 03 04)
+        view.setUint32(localOffset, 0x04034b50, true);
+        view.setUint16(localOffset + 4, 20, true);     // Version (2.0)
+        view.setUint16(localOffset + 6, 0x0800, true); // Flags (UTF-8)
+        view.setUint16(localOffset + 8, 0, true);      // Method (0 = STORE)
+        view.setUint16(localOffset + 10, dosTime, true);
+        view.setUint16(localOffset + 12, dosDate, true);
+        view.setUint32(localOffset + 14, f.crc, true);
+        view.setUint32(localOffset + 18, f.size, true); // Compressed size
+        view.setUint32(localOffset + 22, f.size, true); // Uncompressed size
+        view.setUint16(localOffset + 26, f.nameBytes.length, true);
+        view.setUint16(localOffset + 28, 0, true);      // Extra field length
+        buffer.set(f.nameBytes, localOffset + 30);
+        buffer.set(f.dataBytes, localOffset + 30 + f.nameBytes.length);
+        localOffset += 30 + f.nameBytes.length + f.size;
+
+        centralEntries.push({ ...f, headerOffset });
+      }
+
+      const centralDirStart = localOffset;
+      for (const f of centralEntries) {
+        // Central directory header: 0x02014b50 (PK 01 02)
+        view.setUint32(localOffset, 0x02014b50, true);
+        view.setUint16(localOffset + 4, 20, true);     // Version made by
+        view.setUint16(localOffset + 6, 20, true);     // Version needed
+        view.setUint16(localOffset + 8, 0x0800, true); // UTF-8
+        view.setUint16(localOffset + 10, 0, true);     // Method (STORE)
+        view.setUint16(localOffset + 12, dosTime, true);
+        view.setUint16(localOffset + 14, dosDate, true);
+        view.setUint32(localOffset + 16, f.crc, true);
+        view.setUint32(localOffset + 20, f.size, true);
+        view.setUint32(localOffset + 24, f.size, true);
+        view.setUint16(localOffset + 28, f.nameBytes.length, true);
+        view.setUint16(localOffset + 30, 0, true);
+        view.setUint16(localOffset + 32, 0, true);
+        view.setUint16(localOffset + 34, 0, true);
+        view.setUint16(localOffset + 36, 0, true);
+        view.setUint32(localOffset + 38, 0, true);
+        view.setUint32(localOffset + 42, f.headerOffset, true);
+        buffer.set(f.nameBytes, localOffset + 46);
+        localOffset += 46 + f.nameBytes.length;
+      }
+
+      const centralDirSize = localOffset - centralDirStart;
+
+      // End of Central Directory: 0x06054b50 (PK 05 06)
+      view.setUint32(localOffset, 0x06054b50, true);
+      view.setUint16(localOffset + 4, 0, true);
+      view.setUint16(localOffset + 6, 0, true);
+      view.setUint16(localOffset + 8, fileEntries.length, true);
+      view.setUint16(localOffset + 10, fileEntries.length, true);
+      view.setUint32(localOffset + 12, centralDirSize, true);
+      view.setUint32(localOffset + 16, centralDirStart, true);
+      view.setUint16(localOffset + 20, 0, true);
+
+      if (typeof Blob !== 'undefined') {
+        const b = new Blob([buffer], { type: 'application/zip' });
+        b.bufferData = buffer;
+        return b;
+      }
+      return buffer;
+    }
+    createSimpleZip.buildBuffer = function(files) {
+      const res = createSimpleZip(files);
+      if (res instanceof Uint8Array) return res;
+      if (res && res.bufferData) return res.bufferData;
+      return res;
+    };
+    window.createSimpleZip = createSimpleZip;
+
+    function dataUrlToUint8Array(dataUrl) {
+      const commaIdx = dataUrl.indexOf(',');
+      const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+      const binaryString = (typeof atob === 'function') ? atob(base64) : Buffer.from(base64, 'base64').toString('binary');
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes;
+    }
+    window.dataUrlToUint8Array = dataUrlToUint8Array;
+
+    // Helper for recursive File System Access API directory handle
+    async function getFolderHandle(rootDirHandle, path) {
+      const parts = path.split('/').filter(p => p.trim() !== '' && p !== '.');
+      let current = rootDirHandle;
+      for (const part of parts) {
+        const safePart = part.replace(/[<>:"/|?*]/g, '_');
+        current = await current.getDirectoryHandle(safePart, { create: true });
+      }
+      return current;
+    }
+    window.getFolderHandle = getFolderHandle;
+
+    async function writeFileToHandle(dirHandle, fileName, content) {
+      const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(content);
+      await writable.close();
+    }
+    window.writeFileToHandle = writeFileToHandle;
+
+    // CSV / JSON Export Generators
+    function generateCSV(session) {
+      if (!session) return "";
       const allPids = session.allPids || [];
       const timestamps = session.timestamps || [];
       const sysMetrics = session.systemMetrics || {};
@@ -1401,22 +1634,12 @@
         rows.push(row.join(","));
       }
 
-      const csvContent = rows.join("\n");
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const baseName = session.label ? session.label.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\-]/g, "_") : "telemetry";
-      a.download = baseName + ".csv";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      return rows.join(String.fromCharCode(10));
     }
+    window.generateCSV = generateCSV;
 
-    function downloadJSON() {
-      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
-      const session = loadedSessions[activeSessionKey];
+    function generateJSON(session) {
+      if (!session) return "{}";
       const result = {
         timestamps: session.timestamps,
         system_metrics: session.systemMetrics,
@@ -1438,12 +1661,35 @@
           };
         }
       });
-      const jsonContent = JSON.stringify(result, null, 2);
+      return JSON.stringify(result, null, 2);
+    }
+    window.generateJSON = generateJSON;
+
+    function downloadCSV() {
+      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const session = loadedSessions[activeSessionKey];
+      const csvContent = generateCSV(session);
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const baseName = session.label ? session.label.split('.')[0].replace(/[^a-zA-Z0-9_-]/g, "_") : "telemetry";
+      a.download = baseName + ".csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadJSON() {
+      if (!activeSessionKey || !loadedSessions[activeSessionKey]) return;
+      const session = loadedSessions[activeSessionKey];
+      const jsonContent = generateJSON(session);
       const blob = new Blob([jsonContent], { type: "application/json;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const baseName = session.label ? session.label.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_\-]/g, "_") : "telemetry";
+      const baseName = session.label ? session.label.split('.')[0].replace(/[^a-zA-Z0-9_-]/g, "_") : "telemetry";
       a.download = baseName + ".json";
       document.body.appendChild(a);
       a.click();
@@ -1461,9 +1707,238 @@
       });
     }
 
+    // ==========================================
+    // ⚡ Batch Export All Handlers (Modal, ZIP, Folder)
+    // ==========================================
+    function openBatchExportModal() {
+      const keys = Object.keys(loadedSessions);
+      if (keys.length === 0) {
+        showToast("No sessions loaded to export", "warning");
+        return;
+      }
+      const modal = document.getElementById('batchExportModal');
+      const countBadge = document.getElementById('batchExportSessionCount');
+      if (countBadge) countBadge.textContent = `${keys.length} Session${keys.length > 1 ? 's' : ''}`;
+      const statusContainer = document.getElementById('batchExportStatusContainer');
+      if (statusContainer) statusContainer.style.display = 'none';
+      const progressBar = document.getElementById('batchExportProgressBar');
+      if (progressBar) progressBar.style.width = '0%';
+
+      const btnFolder = document.getElementById('btnBatchExportFolder');
+      if (btnFolder) {
+        if (typeof window.showDirectoryPicker !== 'function') {
+          btnFolder.style.opacity = '0.55';
+          btnFolder.title = 'Direct folder writing is supported in Chrome, Edge, and Opera. Use ZIP download in this browser.';
+        } else {
+          btnFolder.style.opacity = '1.0';
+          btnFolder.title = 'Select a local destination folder';
+        }
+      }
+
+      if (modal) modal.style.display = 'flex';
+    }
+    window.openBatchExportModal = openBatchExportModal;
+
+    function closeBatchExportModal() {
+      const modal = document.getElementById('batchExportModal');
+      if (modal) modal.style.display = 'none';
+    }
+    window.closeBatchExportModal = closeBatchExportModal;
+
+    async function batchExportZip() {
+      const keys = Object.keys(loadedSessions);
+      if (keys.length === 0) {
+        showToast("No sessions loaded to export", "warning");
+        return;
+      }
+
+      const statusContainer = document.getElementById('batchExportStatusContainer');
+      const statusText = document.getElementById('batchExportStatusText');
+      const statusPercent = document.getElementById('batchExportStatusPercent');
+      const progressBar = document.getElementById('batchExportProgressBar');
+      const btnZip = document.getElementById('btnBatchExportZip');
+      const btnFolder = document.getElementById('btnBatchExportFolder');
+
+      if (statusContainer) statusContainer.style.display = 'block';
+      if (btnZip) btnZip.disabled = true;
+      if (btnFolder) btnFolder.disabled = true;
+
+      const total = keys.length;
+      const prevActive = activeSessionKey;
+      const files = [];
+
+      try {
+        for (let idx = 0; idx < total; idx++) {
+          const k = keys[idx];
+          const session = loadedSessions[k];
+          const progressPct = Math.round((idx / total) * 100);
+
+          if (statusText) statusText.textContent = `Rendering session ${idx + 1} of ${total}: ${session.label || k}...`;
+          if (statusPercent) statusPercent.textContent = `${progressPct}%`;
+          if (progressBar) progressBar.style.width = `${progressPct}%`;
+
+          await new Promise(r => setTimeout(r, 20));
+
+          renderSession(k);
+
+          const plotDiv = document.getElementById('telemetry_plot');
+          let pngBytes = new Uint8Array(0);
+          if (window.Plotly && typeof Plotly.toImage === 'function' && plotDiv) {
+            try {
+              const dataUrl = await Plotly.toImage(plotDiv, { format: 'png', width: 1400, height: 850 });
+              if (dataUrl) {
+                pngBytes = dataUrlToUint8Array(dataUrl);
+              }
+            } catch (err) {
+              console.warn("Plotly toImage failed for session " + k, err);
+            }
+          }
+
+          const csvString = generateCSV(session);
+          const jsonString = generateJSON(session);
+
+          let vPath = (session.virtualPath || session.label || k).split(String.fromCharCode(92)).join('/');
+          vPath = vPath.split('/').filter(Boolean).join('/');
+          if (!vPath) vPath = `session_${idx + 1}`;
+
+          files.push({ name: `${vPath}/chart.png`, data: pngBytes });
+          files.push({ name: `${vPath}/telemetry.csv`, data: csvString });
+          files.push({ name: `${vPath}/telemetry.json`, data: jsonString });
+        }
+
+        if (statusText) statusText.textContent = "Compiling ZIP archive...";
+        if (statusPercent) statusPercent.textContent = "100%";
+        if (progressBar) progressBar.style.width = "100%";
+        await new Promise(r => setTimeout(r, 20));
+
+        const zipBlob = createSimpleZip(files);
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "top_telemetry_batch_export.zip";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        closeBatchExportModal();
+        showToast(`Batch export complete: ${total} session(s) exported to ZIP`, "success");
+      } catch (err) {
+        console.error("Batch ZIP export failed:", err);
+        showToast("Batch export failed: " + err.message, "error");
+      } finally {
+        if (btnZip) btnZip.disabled = false;
+        if (btnFolder) btnFolder.disabled = false;
+        if (prevActive && loadedSessions[prevActive]) {
+          renderSession(prevActive);
+        }
+      }
+    }
+    window.batchExportZip = batchExportZip;
+
+    async function batchExportFolder() {
+      const keys = Object.keys(loadedSessions);
+      if (keys.length === 0) {
+        showToast("No sessions loaded to export", "warning");
+        return;
+      }
+      if (typeof window.showDirectoryPicker !== 'function') {
+        showToast("Direct folder saving is not supported in this browser. Please use Download ZIP Archive.", "warning");
+        return;
+      }
+
+      let rootDirHandle;
+      try {
+        rootDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        showToast("Folder selection failed: " + err.message, "error");
+        return;
+      }
+
+      const statusContainer = document.getElementById('batchExportStatusContainer');
+      const statusText = document.getElementById('batchExportStatusText');
+      const statusPercent = document.getElementById('batchExportStatusPercent');
+      const progressBar = document.getElementById('batchExportProgressBar');
+      const btnZip = document.getElementById('btnBatchExportZip');
+      const btnFolder = document.getElementById('btnBatchExportFolder');
+
+      if (statusContainer) statusContainer.style.display = 'block';
+      if (btnZip) btnZip.disabled = true;
+      if (btnFolder) btnFolder.disabled = true;
+
+      const total = keys.length;
+      const prevActive = activeSessionKey;
+
+      try {
+        for (let idx = 0; idx < total; idx++) {
+          const k = keys[idx];
+          const session = loadedSessions[k];
+          const progressPct = Math.round((idx / total) * 100);
+
+          if (statusText) statusText.textContent = `Writing session ${idx + 1} of ${total}: ${session.label || k}...`;
+          if (statusPercent) statusPercent.textContent = `${progressPct}%`;
+          if (progressBar) progressBar.style.width = `${progressPct}%`;
+
+          await new Promise(r => setTimeout(r, 20));
+
+          renderSession(k);
+
+          const plotDiv = document.getElementById('telemetry_plot');
+          let pngBytes = new Uint8Array(0);
+          if (window.Plotly && typeof Plotly.toImage === 'function' && plotDiv) {
+            try {
+              const dataUrl = await Plotly.toImage(plotDiv, { format: 'png', width: 1400, height: 850 });
+              if (dataUrl) {
+                pngBytes = dataUrlToUint8Array(dataUrl);
+              }
+            } catch (err) {
+              console.warn("Plotly toImage failed for session " + k, err);
+            }
+          }
+
+          const csvString = generateCSV(session);
+          const jsonString = generateJSON(session);
+
+          let vPath = (session.virtualPath || session.label || k).split(String.fromCharCode(92)).join('/');
+          vPath = vPath.split('/').filter(Boolean).join('/');
+          if (!vPath) vPath = `session_${idx + 1}`;
+
+          const targetFolderHandle = await getFolderHandle(rootDirHandle, vPath);
+          await writeFileToHandle(targetFolderHandle, 'chart.png', pngBytes);
+          await writeFileToHandle(targetFolderHandle, 'telemetry.csv', csvString);
+          await writeFileToHandle(targetFolderHandle, 'telemetry.json', jsonString);
+        }
+
+        if (statusPercent) statusPercent.textContent = "100%";
+        if (progressBar) progressBar.style.width = "100%";
+        await new Promise(r => setTimeout(r, 20));
+
+        closeBatchExportModal();
+        showToast(`Batch export complete: ${total} session(s) written to selected folder`, "success");
+      } catch (err) {
+        console.error("Batch folder export failed:", err);
+        showToast("Batch folder export failed: " + err.message, "error");
+      } finally {
+        if (btnZip) btnZip.disabled = false;
+        if (btnFolder) btnFolder.disabled = false;
+        if (prevActive && loadedSessions[prevActive]) {
+          renderSession(prevActive);
+        }
+      }
+    }
+    window.batchExportFolder = batchExportFolder;
+
     document.getElementById('btnDownloadCsv')?.addEventListener('click', downloadCSV);
     document.getElementById('btnDownloadJson')?.addEventListener('click', downloadJSON);
     document.getElementById('btnExportPng')?.addEventListener('click', downloadPNG);
+    document.getElementById('btnBatchExportAll')?.addEventListener('click', openBatchExportModal);
+    document.getElementById('btnBatchExportClose')?.addEventListener('click', closeBatchExportModal);
+    document.getElementById('btnBatchExportZip')?.addEventListener('click', batchExportZip);
+    document.getElementById('btnBatchExportFolder')?.addEventListener('click', batchExportFolder);
+    document.getElementById('batchExportModal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'batchExportModal') closeBatchExportModal();
+    });
 
     // Annotation / Marker System
     function addAnnotation(x, text) {
@@ -1887,30 +2362,51 @@
       showSpinner(`Parsing ${files.length} log file(s)...`);
       let pending = files.length;
       const fileBatch = {};
+      dropSequenceCounter++;
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        let folderPrefix = `Drop ${dropSequenceCounter}`;
+        if (file.webkitRelativePath && file.webkitRelativePath.includes('/')) {
+          const parts = file.webkitRelativePath.split('/');
+          parts.pop();
+          folderPrefix = parts.join('/');
+        }
+        const name = file.name;
+        let baseLabel = name.replace(/\.(log|txt|top)$/i, '');
+        const isTop = name.includes("log_top@");
+        const isTopmen = name.includes("log_topmen@");
+
+        if (isTop) baseLabel = baseLabel.replace("log_top@", "");
+        if (isTopmen) baseLabel = baseLabel.replace("log_topmen@", "");
+
+        const batchKey = (file.webkitRelativePath && file.webkitRelativePath.includes('/'))
+          ? `drop_${dropSequenceCounter}_${folderPrefix.replace(/[^a-zA-Z0-9_-]/g, '_')}_${baseLabel}`
+          : `drop_${dropSequenceCounter}_${baseLabel}`;
+        const virtualPath = `${folderPrefix}/${baseLabel}`;
+        const displayLabel = `[${folderPrefix}] ${baseLabel}`;
+
+        if (!fileBatch[batchKey]) {
+          fileBatch[batchKey] = {
+            label: displayLabel,
+            baseLabel: baseLabel,
+            virtualPath: virtualPath,
+            dropIndex: dropSequenceCounter,
+            top: null,
+            topmen: null,
+            other: null
+          };
+        }
+
         const reader = new FileReader();
         reader.onload = (event) => {
           const content = event.target.result;
-          const name = file.name;
-          let label = name.replace(/\.(log|txt|top)$/i, '');
-          const isTop = name.includes("log_top@");
-          const isTopmen = name.includes("log_topmen@");
-
-          if (isTop) label = label.replace("log_top@", "");
-          if (isTopmen) label = label.replace("log_topmen@", "");
-
-          if (!fileBatch[label]) {
-            fileBatch[label] = { label: label, top: null, topmen: null, other: null };
-          }
-
           if (isTop) {
-            fileBatch[label].top = content;
+            fileBatch[batchKey].top = content;
           } else if (isTopmen) {
-            fileBatch[label].topmen = content;
+            fileBatch[batchKey].topmen = content;
           } else {
-            fileBatch[label].other = content;
+            fileBatch[batchKey].other = content;
           }
 
           pending--;
@@ -1938,34 +2434,37 @@
     function processFileBatch(fileBatch) {
       try {
         let firstNewKey = null;
-        for (const label in fileBatch) {
-          const b = fileBatch[label];
+        for (const batchKey in fileBatch) {
+          const b = fileBatch[batchKey];
           let sessionParsed = null;
 
           try {
             if (b.top && b.topmen) {
-              const pTop = parseTopLog(b.top, label);
-              const pMen = parseTopLog(b.topmen, label);
-              sessionParsed = mergeTopAndTopmen(pTop, pMen, label);
+              const pTop = parseTopLog(b.top, b.label);
+              const pMen = parseTopLog(b.topmen, b.label);
+              sessionParsed = mergeTopAndTopmen(pTop, pMen, b.label);
             } else if (b.top) {
-              sessionParsed = parseTopLog(b.top, label);
+              sessionParsed = parseTopLog(b.top, b.label);
             } else if (b.topmen) {
-              sessionParsed = parseTopLog(b.topmen, label);
+              sessionParsed = parseTopLog(b.topmen, b.label);
             } else if (b.other) {
-              sessionParsed = parseTopLog(b.other, label);
+              sessionParsed = parseTopLog(b.other, b.label);
             }
           } catch (err) {
             console.error(err);
-            showToast(`Failed to parse: ${label} (${err.message})`, "error");
+            showToast(`Failed to parse: ${b.label} (${err.message})`, "error");
             continue;
           }
 
           if (sessionParsed && sessionParsed.timestamps && sessionParsed.timestamps.length > 0) {
-            loadedSessions[label] = sessionParsed;
-            if (!firstNewKey) firstNewKey = label;
-            showToast(`Loaded ${label} (${sessionParsed.timestamps.length} snapshots)`, "success");
+            sessionParsed.label = b.label;
+            sessionParsed.virtualPath = b.virtualPath;
+            sessionParsed.dropIndex = b.dropIndex;
+            loadedSessions[batchKey] = sessionParsed;
+            if (!firstNewKey) firstNewKey = batchKey;
+            showToast(`Loaded ${b.label} (${sessionParsed.timestamps.length} snapshots)`, "success");
           } else {
-            showToast(`Failed to parse: ${label} (no valid snapshots found)`, "error");
+            showToast(`Failed to parse: ${b.label} (no valid snapshots found)`, "error");
           }
         }
 
@@ -1977,9 +2476,29 @@
       }
     }
 
+    function renameSession(sessionKey) {
+      const session = loadedSessions[sessionKey];
+      if (!session) return;
+      const newName = prompt("Rename session:", session.label);
+      if (newName && newName.trim() !== "" && newName.trim() !== session.label) {
+        const trimmed = newName.trim();
+        session.label = trimmed;
+        const titleEl = document.getElementById('currentSessionTitle');
+        if (titleEl && activeSessionKey === sessionKey) {
+          titleEl.textContent = trimmed;
+        }
+        updateSessionPills(activeSessionKey);
+        showToast(`Session renamed to "${trimmed}"`, "success");
+      }
+    }
+    window.renameSession = renameSession;
+
     function updateSessionPills(selectKey) {
       const keys = Object.keys(loadedSessions);
       if (!keys.length) return;
+
+      const navContainer = document.getElementById('sessionNav');
+      if (navContainer) navContainer.style.display = "flex";
 
       const pillsContainer = document.getElementById('sessionPills');
       pillsContainer.innerHTML = "";
@@ -1988,10 +2507,13 @@
       const targetKey = (selectKey && loadedSessions[selectKey]) ? selectKey : (activeSessionKey || keys[0]);
 
       keys.forEach(k => {
+        const sess = loadedSessions[k];
         const btn = document.createElement("button");
         btn.className = "session-pill" + (k === targetKey ? " active" : "");
         btn.setAttribute("data-key", k);
-        btn.textContent = `📁 ${k} (${loadedSessions[k].timestamps.length} samples)`;
+        const pillLabel = sess && sess.label ? sess.label : k;
+        const sampleCount = sess && sess.timestamps ? sess.timestamps.length : 0;
+        btn.innerHTML = `📁 ${pillLabel} (${sampleCount} samples) <button class="rename-session-btn" title="Rename session" onclick="event.stopPropagation(); renameSession('${k}')" style="margin-left: 6px; background: none; border: none; cursor: pointer; opacity: 0.7; font-size: 11px;">✏️</button>`;
         btn.addEventListener('click', () => {
           document.querySelectorAll('.session-pill').forEach(p => p.classList.toggle('active', p.getAttribute('data-key') === k));
           renderSession(k);
@@ -2132,6 +2654,7 @@
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
         closeDrillDown();
+        closeBatchExportModal();
       }
     });
 
