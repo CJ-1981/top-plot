@@ -83,7 +83,7 @@ Switch dynamically between curated, WCAG-compliant color palettes with perfect S
 - **Regex & Free-Text Filter**: Instantly isolate processes with standard text queries or full regular expressions (`google|system|mediaserver`).
 - **Batch Action Buttons**: Instant presets for **Top 5 CPU**, **Top 5 MEM**, **Select All**, and **Clear All**.
 - **PID Trace Visibility Toggles (CPU / MEM)**: Dedicated toggle buttons (`[x] PID CPU` and `[x] PID MEM`) allow toggling all process CPU lines or memory lines on or off simultaneously without unchecking processes in the table—keeping plots clean and focused when analyzing system-wide aggregates or specific resources.
-- **Stacked Area Mode (📊 Area Chart)**: Toggle between individual line traces and a stacked area chart for process CPU utilization, offering clear visibility into cumulative workload distribution without confusing visual clutter.
+- **Stacked Area Mode (📊 Area Chart)**: Toggle between individual line traces and stacked area charts across CPU breakdown (`%user`, `%sys`, `%nice`, `%irq`, etc.), process CPU utilization (`pid_cpu_stack`), process RAM allocations (`pid_mem_stack` on secondary axis), and system RAM—offering clear visibility into cumulative workload and memory footprint without visual clutter.
 
 ---
 

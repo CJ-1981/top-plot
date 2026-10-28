@@ -69,6 +69,8 @@ const requiredTokens = [
   'toggleAllPidCpu',
   'toggleAllPidMem',
   'toggleAreaMode',
+  'pid_cpu_stack',
+  'pid_mem_stack',
   'Plotly'
 ];
 

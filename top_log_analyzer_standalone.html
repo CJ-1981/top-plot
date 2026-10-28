@@ -1287,6 +1287,8 @@
         type: "scatter",
         mode: "lines",
         line: { color: theme.accent_mem, width: 1.5, dash: "dot" },
+        fill: isAreaMode ? "tozeroy" : "none",
+        fillcolor: hexToRgba(theme.accent_mem, 0.12),
         hoverlabel: {
           bgcolor: theme.bg_card,
           bordercolor: theme.accent_mem,
@@ -1344,9 +1346,9 @@
             type: "scatter",
             mode: "lines",
             line: { color: col, width: 1.5 },
-            fill: "tozeroy",
-            fillcolor: hexToRgba(col, 0.15),
-            stackgroup: "cpubreakdown",
+            fill: isAreaMode ? "tozeroy" : "none",
+            fillcolor: hexToRgba(col, 0.18),
+            stackgroup: isAreaMode ? "cpubreakdown" : null,
             hoverlabel: {
               bgcolor: theme.bg_card,
               bordercolor: col,
@@ -1409,6 +1411,9 @@
           type: "scatter",
           mode: "lines",
           line: { color: col, width: 1.2, dash: "dash" },
+          fill: isAreaMode ? "tozeroy" : "none",
+          fillcolor: hexToRgba(col, 0.22),
+          stackgroup: isAreaMode ? "pid_mem_stack" : null,
           hoverlabel: {
             bgcolor: theme.bg_card,
             bordercolor: col,
@@ -1654,14 +1659,35 @@
       if (btn) btn.classList.toggle('btn-accent', isAreaMode);
 
       const plotDiv = document.getElementById('telemetry_plot');
-      if (plotDiv && typeof Plotly !== 'undefined' && allPidCpuTraces && allPidCpuTraces.length > 0) {
-        Plotly.restyle(plotDiv, {
-          fill: isAreaMode ? "tozeroy" : "none",
-          stackgroup: isAreaMode ? "pid_cpu_stack" : null,
-          "line.width": isAreaMode ? 1.5 : 2
-        }, allPidCpuTraces);
+      if (plotDiv && typeof Plotly !== 'undefined') {
+        if (allPidCpuTraces && allPidCpuTraces.length > 0) {
+          Plotly.restyle(plotDiv, {
+            fill: isAreaMode ? "tozeroy" : "none",
+            stackgroup: isAreaMode ? "pid_cpu_stack" : null,
+            "line.width": isAreaMode ? 1.5 : 2
+          }, allPidCpuTraces);
+        }
+        if (allPidMemTraces && allPidMemTraces.length > 0) {
+          Plotly.restyle(plotDiv, {
+            fill: isAreaMode ? "tozeroy" : "none",
+            stackgroup: isAreaMode ? "pid_mem_stack" : null,
+            "line.width": 1.2
+          }, allPidMemTraces);
+        }
+        if (sysTraceMap.cpu_breakdown && sysTraceMap.cpu_breakdown.length > 0) {
+          Plotly.restyle(plotDiv, {
+            fill: isAreaMode ? "tozeroy" : "none",
+            stackgroup: isAreaMode ? "cpubreakdown" : null,
+            "line.width": 1.5
+          }, sysTraceMap.cpu_breakdown);
+        }
+        if (sysTraceMap.sys_mem !== undefined) {
+          Plotly.restyle(plotDiv, {
+            fill: isAreaMode ? "tozeroy" : "none"
+          }, [sysTraceMap.sys_mem]);
+        }
       }
-      showToast(isAreaMode ? "Enabled Area Chart mode" : "Disabled Area Chart mode", "info");
+      showToast(isAreaMode ? "Enabled Area Chart mode (CPU + RAM)" : "Disabled Area Chart mode", "info");
     }
 
     function bindTableEvents() {
