@@ -237,6 +237,57 @@
       color: #ffffff;
       border-color: var(--accent-cpu);
     }
+    .session-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .btn-danger-outline {
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--fg-muted);
+      transition: all 0.2s ease;
+    }
+    .btn-danger-outline:hover {
+      border-color: #ef4444;
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.12);
+    }
+    .remove-session-btn {
+      margin-left: 5px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      opacity: 0.6;
+      font-size: 13px;
+      line-height: 1;
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: inherit;
+      transition: color 0.15s, opacity 0.15s, background-color 0.15s;
+    }
+    .remove-session-btn:hover {
+      opacity: 1;
+      color: #ef4444 !important;
+      background-color: rgba(239, 68, 68, 0.18);
+    }
+    .rename-session-btn {
+      margin-left: 6px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      opacity: 0.6;
+      font-size: 11px;
+      padding: 1px 3px;
+      border-radius: 3px;
+      color: inherit;
+      transition: opacity 0.15s, background-color 0.15s;
+    }
+    .rename-session-btn:hover {
+      opacity: 1;
+      background-color: rgba(255, 255, 255, 0.15);
+    }
     .plot-box {
       background: var(--bg-card);
       border-radius: 8px;
@@ -671,7 +722,10 @@
     <!-- Session Navigation Bar -->
     <div id="sessionNav" class="session-nav" style="display: none;">
       <div id="sessionPills" class="session-pills"></div>
-      <button type="button" class="btn btn-accent" id="btnBatchExportAll" title="Batch export PNG, CSV, and JSON for all loaded sessions">⚡ Batch Export All</button>
+      <div class="session-actions">
+        <button type="button" class="btn btn-accent" id="btnBatchExportAll" title="Batch export PNG, CSV, and JSON for all loaded sessions">⚡ Batch Export All</button>
+        <button type="button" class="btn btn-danger-outline" id="btnClearAllSessions" title="Clear all loaded sessions">🗑️ Clear All</button>
+      </div>
     </div>
 
     <!-- Telemetry Dashboard -->
@@ -1986,6 +2040,12 @@
     document.getElementById('btnDownloadJson')?.addEventListener('click', downloadJSON);
     document.getElementById('btnExportPng')?.addEventListener('click', downloadPNG);
     document.getElementById('btnBatchExportAll')?.addEventListener('click', openBatchExportModal);
+    document.getElementById('btnClearAllSessions')?.addEventListener('click', () => {
+      if (Object.keys(loadedSessions).length === 0) return;
+      if (confirm("Are you sure you want to clear all loaded sessions?")) {
+        clearAllSessions();
+      }
+    });
     document.getElementById('btnBatchExportClose')?.addEventListener('click', closeBatchExportModal);
     document.getElementById('btnBatchExportZip')?.addEventListener('click', batchExportZip);
     document.getElementById('btnBatchExportFolder')?.addEventListener('click', batchExportFolder);
@@ -2285,22 +2345,25 @@
       }, false);
     });
 
+    let isHandlingDrop = false;
     window.addEventListener('drop', (e) => {
       e.preventDefault();
       dropZone.classList.remove('dragover');
       const files = e.dataTransfer ? e.dataTransfer.files : null;
-      if (files && files.length) handleFiles(files);
+      if (files && files.length) {
+        if (isHandlingDrop) return;
+        isHandlingDrop = true;
+        try {
+          handleFiles(files);
+        } finally {
+          setTimeout(() => { isHandlingDrop = false; }, 200);
+        }
+      }
     }, false);
-
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('dragover');
-      const files = e.dataTransfer ? e.dataTransfer.files : null;
-      if (files && files.length) handleFiles(files);
-    });
 
     fileInput.addEventListener('change', (e) => {
       if (e.target.files.length) handleFiles(e.target.files);
+      e.target.value = '';
     });
 
     function mergeTopAndTopmen(topParsed, topmenParsed, sessionLabel) {
@@ -2548,12 +2611,21 @@
 
     function updateSessionPills(selectKey) {
       const keys = Object.keys(loadedSessions);
-      if (!keys.length) return;
-
       const navContainer = document.getElementById('sessionNav');
-      if (navContainer) navContainer.style.display = "flex";
-
+      const telemetryView = document.getElementById('telemetryView');
       const pillsContainer = document.getElementById('sessionPills');
+
+      if (!keys.length) {
+        if (navContainer) navContainer.style.display = "none";
+        if (telemetryView) telemetryView.style.display = "none";
+        if (dropZone) dropZone.style.display = "block";
+        if (pillsContainer) pillsContainer.innerHTML = "";
+        activeSessionKey = null;
+        dropSequenceCounter = 0;
+        return;
+      }
+
+      if (navContainer) navContainer.style.display = "flex";
       pillsContainer.innerHTML = "";
       pillsContainer.style.display = "flex";
 
@@ -2566,7 +2638,7 @@
         btn.setAttribute("data-key", k);
         const pillLabel = sess && sess.label ? sess.label : k;
         const sampleCount = sess && sess.timestamps ? sess.timestamps.length : 0;
-        btn.innerHTML = `📁 ${pillLabel} (${sampleCount} samples) <button class="rename-session-btn" title="Rename session" onclick="event.stopPropagation(); renameSession('${k}')" style="margin-left: 6px; background: none; border: none; cursor: pointer; opacity: 0.7; font-size: 11px;">✏️</button>`;
+        btn.innerHTML = `📁 ${pillLabel} (${sampleCount} samples) <button class="rename-session-btn" title="Rename session" onclick="event.stopPropagation(); renameSession('${k}')">✏️</button><button class="remove-session-btn" title="Remove this session" onclick="event.stopPropagation(); removeSession('${k}')">✕</button>`;
         btn.addEventListener('click', () => {
           document.querySelectorAll('.session-pill').forEach(p => p.classList.toggle('active', p.getAttribute('data-key') === k));
           renderSession(k);
@@ -2578,6 +2650,57 @@
       dropZone.style.display = "none";
       renderSession(targetKey);
     }
+
+    function removeSession(sessionKey) {
+      if (!loadedSessions[sessionKey]) return;
+      const label = loadedSessions[sessionKey].label || sessionKey;
+      delete loadedSessions[sessionKey];
+
+      const remainingKeys = Object.keys(loadedSessions);
+      if (remainingKeys.length === 0) {
+        clearAllSessions();
+      } else {
+        const nextKey = (activeSessionKey === sessionKey) ? remainingKeys[0] : activeSessionKey;
+        updateSessionPills(nextKey);
+        showToast(`Removed session "${label}"`, "info");
+      }
+    }
+    window.removeSession = removeSession;
+
+    function clearAllSessions() {
+      const count = Object.keys(loadedSessions).length;
+      for (const k in loadedSessions) {
+        delete loadedSessions[k];
+      }
+      activeSessionKey = null;
+      dropSequenceCounter = 0;
+      annotations.length = 0;
+
+      const navContainer = document.getElementById('sessionNav');
+      if (navContainer) navContainer.style.display = "none";
+
+      const telemetryView = document.getElementById('telemetryView');
+      if (telemetryView) telemetryView.style.display = "none";
+
+      const dropZone = document.getElementById('dropZone');
+      if (dropZone) dropZone.style.display = "block";
+
+      const pillsContainer = document.getElementById('sessionPills');
+      if (pillsContainer) pillsContainer.innerHTML = "";
+
+      const fileInput = document.getElementById('fileInput');
+      if (fileInput) fileInput.value = "";
+
+      const plotDiv = document.getElementById('telemetry_plot');
+      if (plotDiv && typeof Plotly !== 'undefined') {
+        Plotly.purge(plotDiv);
+      }
+
+      if (count > 0) {
+        showToast(`Cleared all ${count} session(s)`, "info");
+      }
+    }
+    window.clearAllSessions = clearAllSessions;
 
     // Process Drill-Down View
     function showDrillDown(pid) {

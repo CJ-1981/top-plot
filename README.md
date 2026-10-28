@@ -42,6 +42,8 @@ Available both as a **100% offline standalone web application** (running entirel
 - **Parent Folder Disambiguation**: When dropping directory hierarchies (e.g. `Run_01/log_top...` and `Run_02/log_top...`), relative paths via `webkitRelativePath` ensure logs with identical filenames are never mixed or overwritten.
 - **Multi-Drop Virtual Paths**: Dropping repeated batches with identical names automatically partitions files into isolated virtual containers (`Drop 1/`, `Drop 2/`, ...).
 - **Inline Session Renaming (✏️)**: Click the rename icon next to any active session pill to quickly customize session labels on the fly.
+- **Individual Session Removal (✕)**: Remove specific sessions directly from their pills without disrupting or reloading remaining datasets.
+- **Workspace Clear All (🗑️ Clear All)**: Reset the workspace, clear all loaded sessions, purge plots, and return to the upload zone with a single click.
 - **Global Drag & Drop Zone**: Drop single files, multiple selections, or entire folders anywhere on the window.
 
 ### 2. ⚡ Batch Export All (Web & Desktop)

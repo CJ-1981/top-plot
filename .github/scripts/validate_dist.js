@@ -47,6 +47,10 @@ const requiredTokens = [
   'renameSession',
   'createSimpleZip',
   'calculateCrc32',
+  'btnClearAllSessions',
+  'clearAllSessions',
+  'removeSession',
+  'remove-session-btn',
   'Plotly'
 ];
 
