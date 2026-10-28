@@ -2915,52 +2915,188 @@
       e.target.value = '';
     });
 
+    function parseTimestampToSeconds(tsStr) {
+      if (!tsStr) return 0;
+      const mFull = tsStr.match(/(\d{4})(\d{2})(\d{2})_(\d{2})[-:](\d{2})[-:](\d{2})/);
+      if (mFull) {
+        return new Date(
+          parseInt(mFull[1], 10),
+          parseInt(mFull[2], 10) - 1,
+          parseInt(mFull[3], 10),
+          parseInt(mFull[4], 10),
+          parseInt(mFull[5], 10),
+          parseInt(mFull[6], 10)
+        ).getTime() / 1000;
+      }
+      const mTime = tsStr.match(/(\d{2}):(\d{2}):(\d{2})/);
+      if (mTime) {
+        return parseInt(mTime[1], 10) * 3600 + parseInt(mTime[2], 10) * 60 + parseInt(mTime[3], 10);
+      }
+      return 0;
+    }
+
     function mergeTopAndTopmen(topParsed, topmenParsed, sessionLabel) {
       if (!topParsed && !topmenParsed) return null;
       if (!topParsed) return topmenParsed;
       if (!topmenParsed) return topParsed;
 
-      const merged = JSON.parse(JSON.stringify(topParsed));
-      merged.label = sessionLabel;
+      // Determine base and secondary datasets based on snapshot count
+      // topParsed usually has higher sampling rate (e.g. 10s vs 13.5s)
+      const baseParsed = (topParsed.timestamps && topmenParsed.timestamps && topParsed.timestamps.length >= topmenParsed.timestamps.length) ? topParsed : topmenParsed;
+      const otherParsed = (baseParsed === topParsed) ? topmenParsed : topParsed;
 
-      if (topmenParsed.systemMetrics["mem_used_mb"] && topmenParsed.systemMetrics["mem_used_mb"].length) {
-        merged.systemMetrics["mem_used_mb"] = topmenParsed.systemMetrics["mem_used_mb"];
+      const baseSecs = baseParsed.timestamps.map(parseTimestampToSeconds);
+      const otherSecs = otherParsed.timestamps.map(parseTimestampToSeconds);
+
+      // Map each base snapshot index i to the closest other snapshot index j by timestamp in seconds
+      const baseToOtherIdx = [];
+      for (let i = 0; i < baseSecs.length; i++) {
+        const t = baseSecs[i];
+        let bestJ = 0;
+        let bestDiff = Math.abs(t - otherSecs[0]);
+        for (let j = 1; j < otherSecs.length; j++) {
+          const diff = Math.abs(t - otherSecs[j]);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestJ = j;
+          } else if (otherSecs[j] > t) {
+            break;
+          }
+        }
+        baseToOtherIdx.push(bestJ);
       }
 
-      for (const pid in topmenParsed.pidData) {
-        const tmPid = topmenParsed.pidData[pid];
-        if (merged.pidData[pid]) {
-          merged.pidData[pid].res_mb = tmPid.res_mb;
-          merged.pidData[pid].max_res_mb = tmPid.max_res_mb;
-          if (tmPid.mem_pct && tmPid.mem_pct.length) {
-            merged.pidData[pid].mem_pct = tmPid.mem_pct;
+      const merged = JSON.parse(JSON.stringify(baseParsed));
+      merged.label = sessionLabel;
+
+      if (baseParsed === topParsed) {
+        // Base is top (has CPU timeline), other is topmen (has Memory timeline)
+        // Align system memory and swap metrics to base timeline length
+        for (const key in otherParsed.systemMetrics) {
+          if (key.includes("mem") || key.includes("swap")) {
+            const series = otherParsed.systemMetrics[key];
+            if (series && series.length) {
+              merged.systemMetrics[key] = baseToOtherIdx.map(j => (j < series.length ? series[j] : 0.0));
+            }
           }
-        } else {
-          merged.pidData[pid] = tmPid;
-          merged.allPids.push(parseInt(pid, 10));
+        }
+
+        // Align process memory metrics to base timeline length
+        for (const pid in otherParsed.pidData) {
+          const tmPid = otherParsed.pidData[pid];
+          const alignedRes = baseToOtherIdx.map(j => (j < tmPid.res_mb.length ? tmPid.res_mb[j] : 0.0));
+          const alignedShr = baseToOtherIdx.map(j => (j < tmPid.shr_mb.length ? tmPid.shr_mb[j] : 0.0));
+          const alignedPct = baseToOtherIdx.map(j => (j < tmPid.mem_pct.length ? tmPid.mem_pct[j] : 0.0));
+
+          if (merged.pidData[pid]) {
+            for (let i = 0; i < baseToOtherIdx.length; i++) {
+              if (alignedRes[i] === 0.0 && merged.pidData[pid].res_mb[i] > 0.0) {
+                alignedRes[i] = merged.pidData[pid].res_mb[i];
+              }
+              if (alignedShr[i] === 0.0 && merged.pidData[pid].shr_mb[i] > 0.0) {
+                alignedShr[i] = merged.pidData[pid].shr_mb[i];
+              }
+              if (alignedPct[i] === 0.0 && merged.pidData[pid].mem_pct[i] > 0.0) {
+                alignedPct[i] = merged.pidData[pid].mem_pct[i];
+              }
+            }
+            merged.pidData[pid].res_mb = alignedRes;
+            merged.pidData[pid].shr_mb = alignedShr;
+            merged.pidData[pid].mem_pct = alignedPct;
+            merged.pidData[pid].max_res_mb = Math.max(...alignedRes);
+            merged.pidData[pid].max_shr_mb = Math.max(...alignedShr);
+            if (tmPid.args && tmPid.args.length > merged.pidData[pid].args.length) {
+              merged.pidData[pid].args = tmPid.args;
+            }
+          } else {
+            merged.pidData[pid] = {
+              pid: parseInt(pid, 10),
+              user: tmPid.user,
+              args: tmPid.args,
+              cpu: new Array(baseSecs.length).fill(0.0),
+              res_mb: alignedRes,
+              shr_mb: alignedShr,
+              mem_pct: alignedPct,
+              max_cpu: tmPid.max_cpu || 0.0,
+              max_res_mb: Math.max(...alignedRes),
+              max_shr_mb: Math.max(...alignedShr)
+            };
+            merged.allPids.push(parseInt(pid, 10));
+          }
+        }
+
+        // Align meminfo series
+        merged.meminfo = merged.meminfo || {};
+        if (otherParsed.meminfo) {
+          for (const k in otherParsed.meminfo) {
+            const series = otherParsed.meminfo[k];
+            if (series && series.length) {
+              merged.meminfo[k] = baseToOtherIdx.map(j => (j < series.length ? series[j] : 0.0));
+            }
+          }
+        }
+
+        // Align point-in-time snapshot details for drilldown
+        if (otherParsed.snapshots && merged.snapshots) {
+          for (let i = 0; i < merged.snapshots.length; i++) {
+            const j = baseToOtherIdx[i];
+            if (otherParsed.snapshots[j]) {
+              if (otherParsed.snapshots[j].meminfo) {
+                merged.snapshots[i].meminfo = Object.assign(
+                  merged.snapshots[i].meminfo || {},
+                  otherParsed.snapshots[j].meminfo
+                );
+              }
+              if (otherParsed.snapshots[j].processes) {
+                merged.snapshots[i].processes = Object.assign(
+                  {},
+                  otherParsed.snapshots[j].processes,
+                  merged.snapshots[i].processes || {}
+                );
+              }
+            }
+          }
+        }
+      } else {
+        // Base is topmen (has Memory timeline), other is top (has CPU timeline)
+        for (const key in otherParsed.systemMetrics) {
+          if (key.includes("cpu")) {
+            const series = otherParsed.systemMetrics[key];
+            if (series && series.length) {
+              merged.systemMetrics[key] = baseToOtherIdx.map(j => (j < series.length ? series[j] : 0.0));
+            }
+          }
+        }
+        for (const pid in otherParsed.pidData) {
+          const tPid = otherParsed.pidData[pid];
+          const alignedCpu = baseToOtherIdx.map(j => (j < tPid.cpu.length ? tPid.cpu[j] : 0.0));
+          if (merged.pidData[pid]) {
+            merged.pidData[pid].cpu = alignedCpu;
+            merged.pidData[pid].max_cpu = Math.max(...alignedCpu);
+            if (tPid.args && tPid.args.length > merged.pidData[pid].args.length) {
+              merged.pidData[pid].args = tPid.args;
+            }
+          } else {
+            merged.pidData[pid] = {
+              pid: parseInt(pid, 10),
+              user: tPid.user,
+              args: tPid.args,
+              cpu: alignedCpu,
+              res_mb: new Array(baseSecs.length).fill(0.0),
+              shr_mb: new Array(baseSecs.length).fill(0.0),
+              mem_pct: new Array(baseSecs.length).fill(0.0),
+              max_cpu: Math.max(...alignedCpu),
+              max_res_mb: 0.0,
+              max_shr_mb: 0.0
+            };
+            merged.allPids.push(parseInt(pid, 10));
+          }
         }
       }
 
       merged.allPids = Array.from(new Set(merged.allPids));
       merged.topMemPids = [...merged.allPids].sort((a, b) => (merged.pidData[b].max_res_mb || 0) - (merged.pidData[a].max_res_mb || 0));
-
-      // Merge meminfo
-      merged.meminfo = merged.meminfo || {};
-      if (topmenParsed.meminfo) {
-        for (const k in topmenParsed.meminfo) {
-          merged.meminfo[k] = topmenParsed.meminfo[k];
-        }
-      }
-      if (topmenParsed.snapshots && merged.snapshots) {
-        for (let i = 0; i < merged.snapshots.length; i++) {
-          if (topmenParsed.snapshots[i] && topmenParsed.snapshots[i].meminfo) {
-            merged.snapshots[i].meminfo = Object.assign(
-              merged.snapshots[i].meminfo || {},
-              topmenParsed.snapshots[i].meminfo
-            );
-          }
-        }
-      }
+      merged.topCpuPids = [...merged.allPids].sort((a, b) => (merged.pidData[b].max_cpu || 0) - (merged.pidData[a].max_cpu || 0));
 
       return merged;
     }
