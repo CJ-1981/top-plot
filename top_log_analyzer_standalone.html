@@ -1279,8 +1279,7 @@
         type: "scatter",
         mode: "lines",
         line: { color: theme.accent_cpu, width: 2 },
-        fill: "tozeroy",
-        fillcolor: hexToRgba(theme.accent_cpu, 0.12),
+        fill: "none",
         hoverlabel: {
           bgcolor: theme.bg_card,
           bordercolor: theme.accent_cpu,
@@ -1299,8 +1298,7 @@
         type: "scatter",
         mode: "lines",
         line: { color: theme.accent_mem, width: 1.5, dash: "dot" },
-        fill: isAreaMode ? "tozeroy" : "none",
-        fillcolor: hexToRgba(theme.accent_mem, 0.12),
+        fill: "none",
         hoverlabel: {
           bgcolor: theme.bg_card,
           bordercolor: theme.accent_mem,
@@ -1690,11 +1688,7 @@
             "line.width": 1.5
           }, sysTraceMap.cpu_breakdown);
         }
-        if (sysTraceMap.sys_mem !== undefined) {
-          Plotly.restyle(plotDiv, {
-            fill: isAreaMode ? "tozeroy" : "none"
-          }, [sysTraceMap.sys_mem]);
-        }
+// sys_mem excluded from area mode
       }
       showToast(isAreaMode ? "Enabled Area Chart mode (CPU + RAM)" : "Disabled Area Chart mode", "info");
     }
