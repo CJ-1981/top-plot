@@ -1,13 +1,13 @@
 # ⚡ Top Log Analyzer — Standalone Web & Desktop Edition
 
 [![GitHub Pages](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-success?style=flat-square&logo=github)](https://CJ-1981.github.io/top-plot/)
-[![Version](https://img.shields.io/badge/Version-v2.3.1-blue.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
+[![Version](https://img.shields.io/badge/Version-v2.3.2-blue.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![Build Date](https://img.shields.io/badge/Build-2026--10--29-informational.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![Plotly](https://img.shields.io/badge/Visualizations-Plotly.js-orange?style=flat-square&logo=plotly)](https://plotly.com/)
 [![Offline Ready](https://img.shields.io/badge/Runtime-100%25%20Offline%20Single--File-brightgreen?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-An advanced, zero-dependency, single-file telemetry analyzer for Linux, Android, and automotive embedded system `top` and `/proc/meminfo` logs (Current Release: **v2.3.1**, Build: `2026-10-29`). 
+An advanced, zero-dependency, single-file telemetry analyzer for Linux, Android, and automotive embedded system `top` and `/proc/meminfo` logs (Current Release: **v2.3.2**, Build: `2026-10-29`). 
 
 Available both as a **100% offline standalone web application** (running entirely client-side inside your browser with zero server and zero network requests) and as a **rich native Qt desktop application**.
 

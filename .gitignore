@@ -23,6 +23,7 @@ dist/
 *.bak
 *_telemetry_report.html
 test_out*.html
+test_*.html
 
 # IDE & OS
 .vscode/
