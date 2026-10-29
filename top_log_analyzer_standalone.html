@@ -1011,7 +1011,8 @@
         "%nice": [],
         "%irq": [],
         "%sirq": [],
-        "%iow": []
+        "%iow": [],
+        "%host": []
       };
       const pidData = {};
       const meminfo = {};
@@ -1021,7 +1022,7 @@
       let currentCpu = 0.0;
       let currentMem = 0.0;
       let currentSwap = 0.0;
-      let currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
+      let currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0, "%host": 0.0 };
       let currentMeminfo = {};
       let currentPidsInSnapshot = {};
       let inProcTable = false;
@@ -1029,7 +1030,7 @@
       const tsRegex = /^(\d{8}[_-]\d{2}[-:]\d{2}[-:]\d{2}|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}|\d{8}_\d{6})/;
       const memRegex = /Mem:\s+(\d+[KkMmGg]?)\s+total,\s+(\d+[KkMmGg]?)\s+used/i;
       const swapRegex = /Swap:\s+(\d+[KkMmGg]?)\s+total,\s+(\d+[KkMmGg]?)\s+used/i;
-      const cpuRegex = /(\d+)%cpu\s+(\d+)%user\s+(\d+)%nice\s+(\d+)%sys\s+(\d+)%idle(?:\s+(\d+)%iow)?(?:\s+(\d+)%irq)?(?:\s+(\d+)%sirq)?/i;
+      const cpuRegex = /(\d+)%cpu\s+(\d+)%user\s+(\d+)%nice\s+(\d+)%sys\s+(\d+)%idle(?:\s+(\d+)%iow)?(?:\s+(\d+)%irq)?(?:\s+(\d+)%sirq)?(?:\s+(\d+)%host)?/i;
       const meminfoRegex = /^([A-Za-z0-9_()]+):\s+(\d+)\s+kB/;
       const procRegex = /^\s*(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([RSDZTtWw])\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+(\S+)\s+(.+)$/;
 
@@ -1048,6 +1049,7 @@
             systemMetrics["%irq"].push(currentCpuBreakdown["%irq"]);
             systemMetrics["%sirq"].push(currentCpuBreakdown["%sirq"]);
             systemMetrics["%iow"].push(currentCpuBreakdown["%iow"]);
+            systemMetrics["%host"].push(currentCpuBreakdown["%host"]);
             for (const pid in pidData) {
               if (!currentPidsInSnapshot[pid]) {
                 pidData[pid].cpu.push(0.0);
@@ -1072,7 +1074,7 @@
           currentCpu = 0.0;
           currentMem = 0.0;
           currentSwap = 0.0;
-          currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0 };
+          currentCpuBreakdown = { "%user": 0.0, "%sys": 0.0, "%nice": 0.0, "%irq": 0.0, "%sirq": 0.0, "%iow": 0.0, "%host": 0.0 };
           currentMeminfo = {};
           currentPidsInSnapshot = {};
           inProcTable = false;
@@ -1103,6 +1105,7 @@
           const iow = parseFloat(cpuMatch[6]) || 0.0;
           const irq = parseFloat(cpuMatch[7]) || 0.0;
           const sirq = parseFloat(cpuMatch[8]) || 0.0;
+          const host = parseFloat(cpuMatch[9]) || 0.0;
           currentCpu = Math.max(0.0, cap - idle);
           currentCpuBreakdown = {
             "%user": user,
@@ -1110,7 +1113,8 @@
             "%nice": nice,
             "%irq": irq,
             "%sirq": sirq,
-            "%iow": iow
+            "%iow": iow,
+            "%host": host
           };
           continue;
         }
@@ -1179,6 +1183,7 @@
         systemMetrics["%irq"].push(currentCpuBreakdown["%irq"]);
         systemMetrics["%sirq"].push(currentCpuBreakdown["%sirq"]);
         systemMetrics["%iow"].push(currentCpuBreakdown["%iow"]);
+        systemMetrics["%host"].push(currentCpuBreakdown["%host"]);
         for (const pid in pidData) {
           if (!currentPidsInSnapshot[pid]) {
             pidData[pid].cpu.push(0.0);
@@ -1327,9 +1332,10 @@
         ["%nice", "CPU %nice"],
         ["%irq", "CPU %irq"],
         ["%sirq", "CPU %sirq"],
-        ["%iow", "CPU %iow"]
+        ["%iow", "CPU %iow"],
+        ["%host", "CPU %host"]
       ];
-      const breakdownColors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4"];
+      const breakdownColors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f59e0b", "#ec4899", "#06b6d4", "#14b8a6"];
       const isBreakdownChecked = document.getElementById('chkCpuBreakdown') ? document.getElementById('chkCpuBreakdown').checked : false;
       const bdTraceIndices = [];
 
@@ -3060,7 +3066,7 @@
       } else {
         // Base is topmen (has Memory timeline), other is top (has CPU timeline)
         for (const key in otherParsed.systemMetrics) {
-          if (key.includes("cpu")) {
+          if (key.includes("cpu") || key.startsWith("%")) {
             const series = otherParsed.systemMetrics[key];
             if (series && series.length) {
               merged.systemMetrics[key] = baseToOtherIdx.map(j => (j < series.length ? series[j] : 0.0));
