@@ -1378,30 +1378,145 @@
           });
 
           const padding = 15;
-          const newHeight = Math.max(currentY + (padding / 2), 35);
+          const totalHeight = Math.max(currentY + (padding / 2), 35);
+          const plotHeight = plotDiv.clientHeight || 600;
+          const maxHoverHeight = Math.min(320, Math.max(180, plotHeight - 80));
+          const isScrollable = totalHeight > maxHoverHeight;
+          const visibleHeight = isScrollable ? maxHoverHeight : totalHeight;
+          const maxScroll = Math.max(0, totalHeight - visibleHeight);
+
+          legendG._isHoverScrollable = isScrollable;
+          legendG._hoverMaxScroll = maxScroll;
+          legendG._hoverVisibleHeight = visibleHeight;
+
+          // Reset scroll to top if timestamp changed
+          const titleEl = legendG.querySelector('text.legendtitletext') || legendG.querySelector('text');
+          const currentTimestamp = titleEl ? (titleEl.textContent || '') : '';
+          if (legendG._lastHoverTimestamp !== currentTimestamp) {
+            legendG._lastHoverTimestamp = currentTimestamp;
+            legendG._hoverScrollY = 0;
+          }
+          let scrollY = Math.max(0, Math.min(maxScroll, legendG._hoverScrollY || 0));
+          legendG._hoverScrollY = scrollY;
 
           const bgRect = legendG.querySelector('rect.bg');
           if (bgRect) {
-            bgRect.setAttribute('height', newHeight);
+            bgRect.setAttribute('height', visibleHeight.toString());
           }
 
+          const borderwidth = parseFloat(bgRect?.style?.strokeWidth || bgRect?.getAttribute('stroke-width') || '1') || 1;
+
           const scrollbox = legendG.querySelector('g.scrollbox');
+          let clipRect = null;
           if (scrollbox) {
-            const clipAttr = scrollbox.getAttribute('clip-path');
-            if (clipAttr) {
-              const clipIdMatch = clipAttr.match(/#([^)]+)/);
-              if (clipIdMatch) {
-                const clipRect = plotDiv.querySelector('#' + clipIdMatch[1] + ' rect');
-                if (clipRect) {
-                  clipRect.setAttribute('height', Math.max(currentY + 10, 35));
-                }
+            const clipAttr = scrollbox.getAttribute('clip-path') || '';
+            const clipIdMatch = clipAttr.match(/url[(]["']?#([^"']+)["']?[)]/) || clipAttr.match(/#([^'")]+)/);
+            if (clipIdMatch) {
+              const clipEl = document.getElementById(clipIdMatch[1]) || plotDiv.querySelector('#' + clipIdMatch[1]);
+              if (clipEl) clipRect = clipEl.querySelector('rect');
+            }
+          }
+
+          let scrollbar = legendG.querySelector('rect.scrollbar');
+
+          function applyHoverScroll(newScroll) {
+            if (newScroll !== undefined) {
+              scrollY = Math.max(0, Math.min(maxScroll, newScroll));
+              legendG._hoverScrollY = scrollY;
+            }
+            if (scrollbox) {
+              scrollbox.setAttribute('transform', 'translate(0, ' + (-scrollY) + ')');
+            }
+            if (clipRect) {
+              clipRect.setAttribute('y', (borderwidth + scrollY).toString());
+              clipRect.setAttribute('height', Math.max(10, visibleHeight - 2 * borderwidth).toString());
+            }
+            if (scrollbar && isScrollable) {
+              const legendWidth = parseFloat(bgRect ? bgRect.getAttribute('width') : '220') || 220;
+              const sbWidth = 6;
+              const sbMargin = 2;
+              const sbTravel = visibleHeight - 2 * sbMargin;
+              const sbHeight = Math.max(20, Math.round((visibleHeight / totalHeight) * sbTravel));
+              legendG._sbHeight = sbHeight;
+              const sbY = sbMargin + (maxScroll > 0 ? (scrollY / maxScroll) * (sbTravel - sbHeight) : 0);
+              const sbX = legendWidth - sbWidth - sbMargin;
+
+              scrollbar.setAttribute('x', sbX.toString());
+              scrollbar.setAttribute('y', sbY.toString());
+              scrollbar.setAttribute('width', sbWidth.toString());
+              scrollbar.setAttribute('height', sbHeight.toString());
+              scrollbar.setAttribute('rx', (sbWidth / 2).toString());
+              scrollbar.setAttribute('ry', (sbWidth / 2).toString());
+              scrollbar.setAttribute('fill', '#9ca3af');
+              scrollbar.setAttribute('opacity', '0.75');
+              scrollbar.style.display = 'block';
+              scrollbar.style.cursor = 'pointer';
+              scrollbar.style.pointerEvents = 'all';
+
+              if (clipRect) {
+                clipRect.setAttribute('width', Math.max(10, legendWidth - sbWidth - sbMargin - borderwidth).toString());
               }
             }
           }
 
-          const scrollbar = legendG.querySelector('rect.scrollbar');
-          if (scrollbar) {
-            scrollbar.style.display = 'none';
+          if (isScrollable) {
+            if (!scrollbar) {
+              scrollbar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+              scrollbar.setAttribute('class', 'scrollbar');
+              legendG.appendChild(scrollbar);
+            }
+            applyHoverScroll();
+
+            legendG.setAttribute('pointer-events', 'all');
+            legendG.style.pointerEvents = 'all';
+
+            if (!legendG._hoverWheelAttached) {
+              legendG._hoverWheelAttached = true;
+              legendG.addEventListener('wheel', (e) => {
+                if (!legendG._isHoverScrollable || !legendG._hoverMaxScroll || legendG._hoverMaxScroll <= 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                applyHoverScroll((legendG._hoverScrollY || 0) + e.deltaY);
+              }, { passive: false });
+            }
+
+            if (!scrollbar._hoverDragAttached) {
+              scrollbar._hoverDragAttached = true;
+              scrollbar.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const startClientY = e.clientY;
+                const startScrollY = legendG._hoverScrollY || 0;
+                const maxS = legendG._hoverMaxScroll || 1;
+                const travel = (legendG._hoverVisibleHeight || 300) - (legendG._sbHeight || 20) - 4;
+                function onDrag(ev) {
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  const dy = ev.clientY - startClientY;
+                  const newScroll = startScrollY + (travel > 0 ? (dy / travel) * maxS : 0);
+                  applyHoverScroll(newScroll);
+                }
+                function onUp() {
+                  window.removeEventListener('mousemove', onDrag, true);
+                  window.removeEventListener('mouseup', onUp, true);
+                }
+                window.addEventListener('mousemove', onDrag, true);
+                window.addEventListener('mouseup', onUp, true);
+              });
+            }
+          } else {
+            if (scrollbar) {
+              scrollbar.setAttribute('width', '0');
+              scrollbar.setAttribute('height', '0');
+              scrollbar.style.display = 'none';
+            }
+            if (scrollbox) {
+              scrollbox.setAttribute('transform', 'translate(0, 0)');
+            }
+            if (clipRect) {
+              clipRect.setAttribute('y', '0');
+              clipRect.setAttribute('height', Math.max(totalHeight + 10, 35).toString());
+            }
           }
 
           const legendTransform = legendG.getAttribute('transform') || '';
@@ -1415,8 +1530,8 @@
 
             if (legY < topMargin) {
               legY = topMargin;
-            } else if (legY + newHeight > plotHeight - btmMargin) {
-              legY = Math.max(topMargin, plotHeight - btmMargin - newHeight);
+            } else if (legY + visibleHeight > plotHeight - btmMargin) {
+              legY = Math.max(topMargin, plotHeight - btmMargin - visibleHeight);
             }
             legendG.setAttribute('transform', 'translate(' + legX + ',' + legY + ')');
           }
@@ -1435,6 +1550,8 @@
       if (plotDiv.on) {
         plotDiv.on('plotly_hover', filterUnifiedHover);
       }
+      plotDiv._applyUnifiedHoverFilter = filterUnifiedHover;
+      filterUnifiedHover();
     }
 
     function setupLegendHeightLock(plotDiv) {

@@ -96,12 +96,16 @@ Switch dynamically between curated, WCAG-compliant color palettes with perfect S
     2. The stacked area breakdown aligns 1:1 with the `System Total CPU%` line with zero visual gap or overflow.
     3. Naive calculations (`capacity - idle = 754%`) that subtract phantom idle are corrected to true saturated capacity ($800\%$).
 
-### 8. 🎯 Intelligent Hover Menu Optimization (Zero-Noise & Ranked Telemetry)
+### 8. 🎯 Intelligent Hover Menu Optimization (Zero-Noise, Ranked Telemetry & Scroller)
 - **System Metrics Pinned to Top**: When enabled, `System Total CPU%`, `System RAM Used (MB)`, `System Swap Used (MB)`, and individual `CPU Breakdown` layers (`%user`, `%sys`, `%nice`, `%irq`, etc.) are always prioritized at the very top of the unified hover card.
 - **Two-Tier Ranked Ordering**: Active process traces are dynamically sorted in real time at every hovered timestamp:
   1. **Process CPU% traces** sorted in **descending order** (highest CPU consumers at the top).
   2. **Process RAM traces** sorted in **descending order** (highest memory consumers at the top).
 - **Zero-Value Suppression (Noise Reduction)**: Individual process traces with `0%` CPU or `0 MB` Memory are automatically hidden from the unified hover card (`display: none`), preventing dozens of dormant background threads (e.g. `sleep`, idle daemons) from stretching the hover card vertically across the entire viewport.
+- **Dedicated Hover Menu Scroller**:
+  - When the list of active processes exceeds the maximum visible height (capped at 320px or `plotHeight - 80px`), a sleek vertical SVG scrollbar is activated on the hover card.
+  - Hovering over the card allows users to smoothly scroll through all active processes via mouse wheel or scrollbar drag, with canvas zoom propagation stopped (`stopPropagation`) so the timeline zoom level remains steady.
+  - Moving the cursor to a new timestamp resets the hover scroll position back to the top, guaranteeing system totals and top consumers are always immediately in view.
 - **Dynamic Box Sizing & Boundary Clamping**: The hover card background rectangle and clipping masks dynamically shrink to wrap only active metrics, and the entire hover box is clamped within the chart bounds so headers and readouts are never clipped at the screen edges.
 
 ### 9. 📐 Constrained PID Legend Area & Resizer Space Allocation
