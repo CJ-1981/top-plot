@@ -85,6 +85,17 @@ Switch dynamically between curated, WCAG-compliant color palettes with perfect S
 - **PID Trace Visibility Toggles (CPU / MEM)**: Dedicated toggle buttons (`[x] PID CPU` and `[x] PID MEM`) allow toggling all process CPU lines or memory lines on or off simultaneously without unchecking processes in the table—keeping plots clean and focused when analyzing system-wide aggregates or specific resources.
 - **Stacked Area Mode (📊 Area Chart)**: Toggle between individual line traces and stacked area charts across CPU breakdown (`%user`, `%sys`, `%nice`, `%irq`, etc.), process CPU utilization (`pid_cpu_stack`), process RAM allocations (`pid_mem_stack` on secondary axis), and system RAM—offering clear visibility into cumulative workload and memory footprint without visual clutter.
 
+### 7. 🛡️ Toybox Hypervisor & Steal Overflow Correction (%host & Phantom Idle)
+- **Virtualization & %host Accounting**: Embedded automotive Android systems running on top of hypervisors (e.g. QNX, ACRN, Gunyah) report hypervisor steal time via `%host` in Toybox `top`.
+- **Toybox Phantom Idle Overflow Mitigation**:
+  In Android's Toybox `top` source code (`toys/posix/ps.c`), idle time is computed as `stats[3] = now - llabs(ll)` where `ll` is the sum of active tick deltas. When hypervisor steal (`%host`) or scheduling burst causes active ticks to momentarily exceed capacity (e.g. $847\% > 800\%$), Toybox calculates a negative delta ($800 - 847 = -47$) and invokes `llabs(-47)`, incorrectly reporting $+46\%$ idle despite the system being 100% saturated.
+- **Architectural Normalization Decision**:
+  - When $\sum \text{active} \ge \text{capacity}$: The analyzer detects the Toybox overflow artifact, corrects idle to `0.0%`, bounds `System Total CPU%` to physical system capacity ($800.0\%$), and proportionately normalizes breakdown layers to $800.0\%$.
+  - This ensures that:
+    1. The stacked area chart ceiling never exceeds physical CPU capacity ($800\%$).
+    2. The stacked area breakdown aligns 1:1 with the `System Total CPU%` line with zero visual gap or overflow.
+    3. Naive calculations (`capacity - idle = 754%`) that subtract phantom idle are corrected to true saturated capacity ($800\%$).
+
 ---
 
 ## 📁 Repository Structure

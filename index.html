@@ -850,7 +850,7 @@
           <span class="badge" id="processBadge">0 Processes</span>
         </div>
         <div class="header-controls">
-          <label class="toggle-label"><input type="checkbox" id="chkSysCpu" checked /> <span>System CPU%</span></label>
+          <label class="toggle-label" title="Toggle System Total CPU% curve (Capped at system capacity; corrected for Toybox hypervisor/steal overflow)"><input type="checkbox" id="chkSysCpu" checked title="Toggle System Total CPU% curve (Capped at system capacity; corrected for Toybox hypervisor/steal overflow)" /> <span>System CPU%</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkSysMem" checked /> <span>System RAM MB</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkCpuBreakdown" /> <span>CPU Breakdown</span></label>
           <label class="toggle-label"><input type="checkbox" id="chkSysSwap" /> <span>System Swap MB</span></label>
@@ -1098,15 +1098,44 @@
         const cpuMatch = line.match(cpuRegex);
         if (cpuMatch) {
           const cap = parseFloat(cpuMatch[1]);
-          const user = parseFloat(cpuMatch[2]) || 0.0;
-          const nice = parseFloat(cpuMatch[3]) || 0.0;
-          const sys = parseFloat(cpuMatch[4]) || 0.0;
-          const idle = parseFloat(cpuMatch[5]) || 0.0;
-          const iow = parseFloat(cpuMatch[6]) || 0.0;
-          const irq = parseFloat(cpuMatch[7]) || 0.0;
-          const sirq = parseFloat(cpuMatch[8]) || 0.0;
-          const host = parseFloat(cpuMatch[9]) || 0.0;
-          currentCpu = Math.max(0.0, cap - idle);
+          let user = parseFloat(cpuMatch[2]) || 0.0;
+          let nice = parseFloat(cpuMatch[3]) || 0.0;
+          let sys = parseFloat(cpuMatch[4]) || 0.0;
+          let idle = parseFloat(cpuMatch[5]) || 0.0;
+          let iow = parseFloat(cpuMatch[6]) || 0.0;
+          let irq = parseFloat(cpuMatch[7]) || 0.0;
+          let sirq = parseFloat(cpuMatch[8]) || 0.0;
+          let host = parseFloat(cpuMatch[9]) || 0.0;
+
+          const activeSum = user + nice + sys + irq + sirq + iow + host;
+          if (activeSum >= cap && cap > 0) {
+            // Toybox llabs(now - sum) bug: When active ticks exceed capacity during burst/steal,
+            // Toybox takes abs(cap - activeSum) and reports it as phantom idle.
+            // Actual idle is 0, and system is 100% capacity saturated.
+            idle = 0.0;
+            currentCpu = cap;
+            const scale = cap / activeSum;
+            user = Math.round(user * scale * 10) / 10;
+            nice = Math.round(nice * scale * 10) / 10;
+            sys = Math.round(sys * scale * 10) / 10;
+            irq = Math.round(irq * scale * 10) / 10;
+            sirq = Math.round(sirq * scale * 10) / 10;
+            iow = Math.round(iow * scale * 10) / 10;
+            host = Math.round(host * scale * 10) / 10;
+          } else {
+            currentCpu = Math.max(0.0, cap - idle);
+            if (activeSum > 0 && Math.abs(activeSum - currentCpu) <= 3) {
+              const scale = currentCpu / activeSum;
+              user = Math.round(user * scale * 10) / 10;
+              nice = Math.round(nice * scale * 10) / 10;
+              sys = Math.round(sys * scale * 10) / 10;
+              irq = Math.round(irq * scale * 10) / 10;
+              sirq = Math.round(sirq * scale * 10) / 10;
+              iow = Math.round(iow * scale * 10) / 10;
+              host = Math.round(host * scale * 10) / 10;
+            }
+          }
+
           currentCpuBreakdown = {
             "%user": user,
             "%sys": sys,
