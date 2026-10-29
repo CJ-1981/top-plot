@@ -104,6 +104,14 @@ Switch dynamically between curated, WCAG-compliant color palettes with perfect S
 - **Zero-Value Suppression (Noise Reduction)**: Individual process traces with `0%` CPU or `0 MB` Memory are automatically hidden from the unified hover card (`display: none`), preventing dozens of dormant background threads (e.g. `sleep`, idle daemons) from stretching the hover card vertically across the entire viewport.
 - **Dynamic Box Sizing & Boundary Clamping**: The hover card background rectangle and clipping masks dynamically shrink to wrap only active metrics, and the entire hover box is clamped within the chart bounds so headers and readouts are never clipped at the screen edges.
 
+### 9. 📐 Constrained PID Legend Area & Resizer Space Allocation
+- **Max 5-Line Lock**: When many or all PIDs are selected (e.g., 50+ processes creating 15–30+ rows of legend items), the upper horizontal legend area is locked to a maximum of 5 lines in height (~100–115px).
+- **Dedicated Legend Scrollbar & Mouse Wheel Scroll**:
+  - Traces beyond 5 lines remain fully accessible via an integrated SVG scrollbar and smooth mouse-wheel scrolling.
+  - Mouse-wheel events over the legend box prevent canvas zoom propagation (`stopPropagation`), ensuring plot zoom is unaffected while scrolling through legend items.
+- **Dedicated Height Allocation on Drag**: When expanding chart height using the vertical resize handle (`#plotResizeHandle` from 300px to 1800px), the legend height remains locked at 5 lines, dedicating 100% of the gained vertical pixels directly to enlarging the telemetry curves and stacked area charts.
+- **Automatic Dynamic Unlock**: When 5 or fewer lines are active (e.g., default view, "Top 5 CPU", "Top 5 MEM", or "Clear All"), the legend automatically unlocks to its natural height and hides the scrollbar.
+
 ---
 
 ## 📁 Repository Structure

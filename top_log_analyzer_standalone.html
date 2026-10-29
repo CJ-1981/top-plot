@@ -1437,6 +1437,186 @@
       }
     }
 
+    function setupLegendHeightLock(plotDiv) {
+      if (!plotDiv || typeof MutationObserver === 'undefined') return;
+
+      let isLocking = false;
+      function applyLegendLock() {
+        if (isLocking) return;
+        isLocking = true;
+        try {
+          const infolayer = plotDiv.querySelector('.infolayer');
+          if (!infolayer) return;
+          const legendG = infolayer.querySelector('g.legend');
+          if (!legendG) return;
+          const bgRect = legendG.querySelector('rect.bg');
+          if (!bgRect) return;
+          const scrollbox = legendG.querySelector('g.scrollbox');
+          if (!scrollbox) return;
+          const groupsG = scrollbox.querySelector('g.groups');
+          if (!groupsG) return;
+
+          const traceGs = Array.from(groupsG.querySelectorAll('g.traces'));
+          if (traceGs.length === 0) return;
+
+          const yMap = {};
+          for (let i = 0; i < traceGs.length; i++) {
+            const tr = traceGs[i].getAttribute('transform') || '';
+            const m = tr.match(/translate[(][ 	]*[0-9.-]+[ 	]*,[ 	]*([0-9.-]+)[ 	]*[)]/);
+            if (m) {
+              const roundedY = Math.round(parseFloat(m[1]) * 10) / 10;
+              yMap[roundedY] = true;
+            }
+          }
+          const yCoords = Object.keys(yMap).map(Number).sort((a, b) => a - b);
+          const rowCount = yCoords.length;
+
+          const clipAttr = scrollbox.getAttribute('clip-path') || '';
+          const clipMatch = clipAttr.match(/url[(]["']?#([^"']+)["']?[)]/);
+          let clipRect = null;
+          if (clipMatch && clipMatch[1]) {
+            const clipEl = document.getElementById(clipMatch[1]);
+            if (clipEl) clipRect = clipEl.querySelector('rect');
+          }
+
+          let scrollbar = legendG.querySelector('rect.scrollbar');
+
+          if (rowCount <= 5) {
+            legendG._isLocked = false;
+            legendG._currentScrollY = 0;
+            if (scrollbox.getAttribute('transform') !== 'translate(0, 0)') {
+              scrollbox.setAttribute('transform', 'translate(0, 0)');
+            }
+            if (clipRect && clipRect.getAttribute('y') !== '0') {
+              clipRect.setAttribute('y', '0');
+            }
+            if (scrollbar) {
+              scrollbar.setAttribute('width', '0');
+              scrollbar.setAttribute('height', '0');
+              scrollbar.style.display = 'none';
+            }
+            return;
+          }
+
+          legendG._isLocked = true;
+          const rowHeight = (yCoords[yCoords.length - 1] - yCoords[0]) / (yCoords.length - 1);
+          const currentBgH = parseFloat(bgRect.getAttribute('height')) || 0;
+          const estimatedFullH = Math.round((yCoords[yCoords.length - 1] - yCoords[0]) + rowHeight + 16);
+          const naturalHeight = Math.max(legendG._naturalHeight || 0, Math.max(currentBgH, estimatedFullH));
+          legendG._naturalHeight = naturalHeight;
+
+          const visibleHeight = Math.round((yCoords[4] - yCoords[0]) + rowHeight + 16);
+          legendG._visibleHeight = visibleHeight;
+
+          const vhStr = visibleHeight.toString();
+          if (bgRect.getAttribute('height') !== vhStr) {
+            bgRect.setAttribute('height', vhStr);
+          }
+
+          const borderwidth = parseFloat(bgRect.style.strokeWidth || bgRect.getAttribute('stroke-width') || '1') || 1;
+          const clipHStr = Math.max(10, visibleHeight - 2 * borderwidth).toString();
+          if (clipRect && clipRect.getAttribute('height') !== clipHStr) {
+            clipRect.setAttribute('height', clipHStr);
+          }
+
+          const maxScroll = Math.max(0, naturalHeight - visibleHeight);
+          legendG._maxScroll = maxScroll;
+          legendG._currentScrollY = Math.max(0, Math.min(maxScroll, legendG._currentScrollY || 0));
+          const scrollY = legendG._currentScrollY;
+
+          const transStr = 'translate(0, ' + (-scrollY) + ')';
+          if (scrollbox.getAttribute('transform') !== transStr) {
+            scrollbox.setAttribute('transform', transStr);
+          }
+
+          const clipYStr = (borderwidth + scrollY).toString();
+          if (clipRect && clipRect.getAttribute('y') !== clipYStr) {
+            clipRect.setAttribute('y', clipYStr);
+          }
+
+          if (!scrollbar) {
+            scrollbar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            scrollbar.setAttribute('class', 'scrollbar');
+            legendG.appendChild(scrollbar);
+          }
+
+          const legendWidth = parseFloat(bgRect.getAttribute('width')) || 200;
+          const sbWidth = 6;
+          const sbMargin = 2;
+          const sbTravel = visibleHeight - 2 * sbMargin;
+          const sbHeight = Math.max(20, Math.round((visibleHeight / naturalHeight) * sbTravel));
+          legendG._sbHeight = sbHeight;
+          const sbY = sbMargin + (maxScroll > 0 ? (scrollY / maxScroll) * (sbTravel - sbHeight) : 0);
+          const sbX = legendWidth - sbWidth - sbMargin;
+
+          scrollbar.setAttribute('x', sbX.toString());
+          scrollbar.setAttribute('y', sbY.toString());
+          scrollbar.setAttribute('width', sbWidth.toString());
+          scrollbar.setAttribute('height', sbHeight.toString());
+          scrollbar.setAttribute('rx', (sbWidth / 2).toString());
+          scrollbar.setAttribute('ry', (sbWidth / 2).toString());
+          scrollbar.setAttribute('fill', '#9ca3af');
+          scrollbar.setAttribute('opacity', '0.75');
+          scrollbar.style.display = 'block';
+          scrollbar.style.cursor = 'pointer';
+          scrollbar.style.pointerEvents = 'all';
+
+          if (!legendG._wheelAttached) {
+            legendG._wheelAttached = true;
+            legendG.addEventListener('wheel', (e) => {
+              if (!legendG._isLocked || !legendG._maxScroll || legendG._maxScroll <= 0) return;
+              e.preventDefault();
+              e.stopPropagation();
+              legendG._currentScrollY = Math.max(0, Math.min(legendG._maxScroll, (legendG._currentScrollY || 0) + e.deltaY));
+              applyLegendLock();
+            }, { passive: false });
+          }
+
+          if (!scrollbar._dragAttached) {
+            scrollbar._dragAttached = true;
+            scrollbar.addEventListener('mousedown', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const startClientY = e.clientY;
+              const startScrollY = legendG._currentScrollY || 0;
+              const maxS = legendG._maxScroll || 1;
+              const travel = (legendG._visibleHeight || 100) - (legendG._sbHeight || 20) - 4;
+              function onDrag(ev) {
+                const dy = ev.clientY - startClientY;
+                const newScroll = startScrollY + (travel > 0 ? (dy / travel) * maxS : 0);
+                legendG._currentScrollY = Math.max(0, Math.min(maxS, newScroll));
+                applyLegendLock();
+              }
+              function onUp() {
+                window.removeEventListener('mousemove', onDrag);
+                window.removeEventListener('mouseup', onUp);
+              }
+              window.addEventListener('mousemove', onDrag);
+              window.addEventListener('mouseup', onUp);
+            });
+          }
+        } finally {
+          isLocking = false;
+        }
+      }
+
+      if (plotDiv._legendLockObserver) {
+        plotDiv._legendLockObserver.disconnect();
+      }
+      const observer = new MutationObserver(applyLegendLock);
+      plotDiv._legendLockObserver = observer;
+      observer.observe(plotDiv, { childList: true, subtree: true });
+
+      if (plotDiv.on) {
+        plotDiv.on('plotly_afterplot', applyLegendLock);
+        plotDiv.on('plotly_relayout', applyLegendLock);
+        plotDiv.on('plotly_restyle', applyLegendLock);
+      }
+
+      plotDiv._applyLegendLock = applyLegendLock;
+      applyLegendLock();
+    }
+
     function renderSession(sessionKey) {
       const session = loadedSessions[sessionKey];
       if (!session) return;
@@ -1702,6 +1882,7 @@
 
       Plotly.newPlot("telemetry_plot", traces, layout, { responsive: true });
       setupUnifiedHoverFilter(document.getElementById("telemetry_plot"));
+      setupLegendHeightLock(document.getElementById("telemetry_plot"));
 
       // Reset marker mode state on session render
       markerMode = false;
@@ -2857,6 +3038,9 @@
         if (window.Plotly && typeof Plotly.relayout === 'function' && plotDiv.layout) {
           Plotly.relayout(plotDiv, { height: newHeight });
         }
+        if (typeof plotDiv._applyLegendLock === 'function') {
+          plotDiv._applyLegendLock();
+        }
       });
 
       window.addEventListener('mouseup', () => {
@@ -2867,6 +3051,9 @@
         document.body.style.userSelect = '';
         if (window.Plotly && typeof Plotly.Plots?.resize === 'function') {
           Plotly.Plots.resize(plotDiv);
+        }
+        if (typeof plotDiv._applyLegendLock === 'function') {
+          plotDiv._applyLegendLock();
         }
       });
     })();
