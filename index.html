@@ -803,7 +803,7 @@
       <div class="title-group">
         <h1>⚡ Top Log Analyzer — Standalone Web Edition</h1>
         <span class="badge" id="appModeBadge">Client-Side • Offline Ready</span>
-        <span class="badge" id="appVersionBadge">v2.3.0</span>
+        <span class="badge" id="appVersionBadge">v2.3.1</span>
       </div>
       <div class="header-controls">
         <button type="button" class="btn" id="btnUploadToggle">📂 Upload Logs</button>
@@ -944,7 +944,7 @@
       <div class="footer-left">
         <strong>⚡ Top Log Analyzer</strong>
         <span class="footer-sep">•</span>
-        <span class="footer-badge">v2.3.0</span>
+        <span class="footer-badge">v2.3.1</span>
         <span class="footer-sep">•</span>
         <span class="footer-dim">Build: 2026-10-29</span>
       </div>
@@ -955,9 +955,9 @@
   </div>
 
   <script>
-    const APP_VERSION = "2.3.0";
+    const APP_VERSION = "2.3.1";
     const BUILD_DATE = "2026-10-29";
-    window.APP_VERSION = "2.3.0";
+    window.APP_VERSION = "2.3.1";
     window.BUILD_DATE = "2026-10-29";
 
     const THEMES = {"Dark Fusion": {"bg_window": "#111827", "bg_card": "#1f2937", "bg_header": "#374151", "fg_text": "#f3f4f6", "fg_muted": "#9ca3af", "border": "#374151", "accent_cpu": "#10b981", "accent_mem": "#f59e0b", "grid": "#4b5563", "curve_colors": ["#06b6d4", "#a855f7", "#ec4899", "#3b82f6", "#eab308", "#14b8a6", "#f97316", "#84cc16"], "plotly_template": "plotly_dark"}, "Light Mode": {"bg_window": "#f8fafc", "bg_card": "#ffffff", "bg_header": "#e2e8f0", "fg_text": "#0f172a", "fg_muted": "#64748b", "border": "#cbd5e1", "accent_cpu": "#059669", "accent_mem": "#d97706", "grid": "#94a3b8", "curve_colors": ["#0284c7", "#7c3aed", "#db2777", "#2563eb", "#ca8a04", "#0d9488", "#ea580c", "#65a30d"], "plotly_template": "plotly_white"}, "Midnight Neon": {"bg_window": "#0a0e17", "bg_card": "#111827", "bg_header": "#1f293d", "fg_text": "#e0e7ff", "fg_muted": "#818cf8", "border": "#312e81", "accent_cpu": "#06b6d4", "accent_mem": "#f43f5e", "grid": "#1e293b", "curve_colors": ["#38bdf8", "#c084fc", "#f472b6", "#60a5fa", "#facc15", "#2dd4bf", "#fb923c", "#a3e635"], "plotly_template": "plotly_dark"}, "Solarized Dark": {"bg_window": "#002b36", "bg_card": "#073642", "bg_header": "#094352", "fg_text": "#93a1a1", "fg_muted": "#657b83", "border": "#586e75", "accent_cpu": "#2aa198", "accent_mem": "#b58900", "grid": "#586e75", "curve_colors": ["#268bd2", "#6c71c4", "#d33682", "#859900", "#cb4b16", "#2aa198", "#b58900", "#268bd2"], "plotly_template": "plotly_dark"}, "Monokai": {"bg_window": "#1e1e1e", "bg_card": "#252526", "bg_header": "#333333", "fg_text": "#f8f8f2", "fg_muted": "#75715e", "border": "#3e3e42", "accent_cpu": "#a6e22e", "accent_mem": "#fd971f", "grid": "#49483e", "curve_colors": ["#66d9ef", "#ae81ff", "#f92672", "#a6e22e", "#fd971f", "#e6db74", "#66d9ef", "#ae81ff"], "plotly_template": "plotly_dark"}};
@@ -1612,6 +1612,19 @@
               scrollbar.setAttribute('height', '0');
               scrollbar.style.display = 'none';
             }
+            const currentBgH = parseFloat(bgRect.getAttribute('height')) || 0;
+            const neededMarginTop = Math.max(35, Math.round(currentBgH + 6));
+            if (plotDiv._fullLayout) {
+              if (plotDiv._fullLayout._reservedMargin?.legend) {
+                plotDiv._fullLayout._reservedMargin.legend.t = neededMarginTop;
+              }
+              if (plotDiv._fullLayout._pushmargin?.legend) {
+                plotDiv._fullLayout._pushmargin.legend.t.size = neededMarginTop;
+              }
+            }
+            if (plotDiv.layout && Math.abs((plotDiv.layout.margin?.t || 0) - neededMarginTop) > 2) {
+              Plotly.relayout(plotDiv, { 'margin.t': neededMarginTop });
+            }
             return;
           }
 
@@ -1711,6 +1724,19 @@
               window.addEventListener('mousemove', onDrag);
               window.addEventListener('mouseup', onUp);
             });
+          }
+
+          const neededMarginTop = Math.max(35, Math.round(visibleHeight + 6));
+          if (plotDiv._fullLayout) {
+            if (plotDiv._fullLayout._reservedMargin?.legend) {
+              plotDiv._fullLayout._reservedMargin.legend.t = neededMarginTop;
+            }
+            if (plotDiv._fullLayout._pushmargin?.legend) {
+              plotDiv._fullLayout._pushmargin.legend.t.size = neededMarginTop;
+            }
+          }
+          if (plotDiv.layout && Math.abs((plotDiv.layout.margin?.t || 0) - neededMarginTop) > 2) {
+            Plotly.relayout(plotDiv, { 'margin.t': neededMarginTop });
           }
         } finally {
           isLocking = false;
@@ -1956,12 +1982,13 @@
           bordercolor: theme.border,
           font: { color: theme.fg_text, size: 11, family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }
         },
-        margin: { l: 45, r: 45, t: 50, b: 40 },
+        margin: { l: 45, r: 45, t: 35, b: 40, autoexpand: false },
         annotations: annotations,
         legend: {
           orientation: "h",
-          yanchor: "bottom",
-          y: 1.02,
+          yanchor: "top",
+          y: 1,
+          yref: "container",
           xanchor: "right",
           x: 1,
           bgcolor: theme.bg_card,
@@ -3153,7 +3180,8 @@
         const newHeight = Math.max(300, Math.min(1800, startHeight + delta));
         plotDiv.style.height = `${newHeight}px`;
         if (window.Plotly && typeof Plotly.relayout === 'function' && plotDiv.layout) {
-          Plotly.relayout(plotDiv, { height: newHeight });
+          const currentMarginT = plotDiv.layout.margin?.t || 35;
+          Plotly.relayout(plotDiv, { height: newHeight, 'margin.t': currentMarginT });
         }
         if (typeof plotDiv._applyLegendLock === 'function') {
           plotDiv._applyLegendLock();
@@ -3166,6 +3194,10 @@
         handle.classList.remove('active');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
+        if (window.Plotly && typeof Plotly.relayout === 'function' && plotDiv.layout) {
+          const currentMarginT = plotDiv.layout.margin?.t || 35;
+          Plotly.relayout(plotDiv, { 'margin.t': currentMarginT });
+        }
         if (window.Plotly && typeof Plotly.Plots?.resize === 'function') {
           Plotly.Plots.resize(plotDiv);
         }
@@ -3348,6 +3380,10 @@
           if (ann.font) ann.font.color = t.fg_text;
           return ann;
         }),
+        margin: {
+          ...plotDiv.layout.margin,
+          autoexpand: false
+        },
         legend: {
           ...plotDiv.layout.legend,
           bgcolor: t.bg_card,
@@ -3355,8 +3391,9 @@
           borderwidth: 1,
           font: { color: t.fg_text, size: 11 },
           orientation: "h",
-          yanchor: "bottom",
-          y: 1.02,
+          yanchor: "top",
+          y: 1,
+          yref: "container",
           xanchor: "right",
           x: 1
         },
@@ -3990,11 +4027,12 @@
           bordercolor: theme.border,
           font: { color: theme.fg_text, size: 11 }
         },
-        margin: { l: 50, r: 50, t: 30, b: 40 },
+        margin: { l: 50, r: 50, t: 35, b: 40, autoexpand: false },
         legend: {
           orientation: "h",
-          yanchor: "bottom",
-          y: 1.02,
+          yanchor: "top",
+          y: 1,
+          yref: "container",
           xanchor: "right",
           x: 1,
           bgcolor: theme.bg_card,
