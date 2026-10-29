@@ -1,13 +1,13 @@
 # ⚡ Top Log Analyzer — Standalone Web & Desktop Edition
 
 [![GitHub Pages](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-success?style=flat-square&logo=github)](https://CJ-1981.github.io/top-plot/)
-[![Version](https://img.shields.io/badge/Version-v2.1.0-blue.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
-[![Build Date](https://img.shields.io/badge/Build-2026--10--28-informational.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
+[![Version](https://img.shields.io/badge/Version-v2.3.0-blue.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
+[![Build Date](https://img.shields.io/badge/Build-2026--10--29-informational.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![Plotly](https://img.shields.io/badge/Visualizations-Plotly.js-orange?style=flat-square&logo=plotly)](https://plotly.com/)
 [![Offline Ready](https://img.shields.io/badge/Runtime-100%25%20Offline%20Single--File-brightgreen?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-An advanced, zero-dependency, single-file telemetry analyzer for Linux, Android, and automotive embedded system `top` and `/proc/meminfo` logs (Current Release: **v2.1.0**, Build: `2026-10-28`). 
+An advanced, zero-dependency, single-file telemetry analyzer for Linux, Android, and automotive embedded system `top` and `/proc/meminfo` logs (Current Release: **v2.3.0**, Build: `2026-10-29`). 
 
 Available both as a **100% offline standalone web application** (running entirely client-side inside your browser with zero server and zero network requests) and as a **rich native Qt desktop application**.
 
@@ -95,6 +95,14 @@ Switch dynamically between curated, WCAG-compliant color palettes with perfect S
     1. The stacked area chart ceiling never exceeds physical CPU capacity ($800\%$).
     2. The stacked area breakdown aligns 1:1 with the `System Total CPU%` line with zero visual gap or overflow.
     3. Naive calculations (`capacity - idle = 754%`) that subtract phantom idle are corrected to true saturated capacity ($800\%$).
+
+### 8. 🎯 Intelligent Hover Menu Optimization (Zero-Noise & Ranked Telemetry)
+- **System Metrics Pinned to Top**: When enabled, `System Total CPU%`, `System RAM Used (MB)`, `System Swap Used (MB)`, and individual `CPU Breakdown` layers (`%user`, `%sys`, `%nice`, `%irq`, etc.) are always prioritized at the very top of the unified hover card.
+- **Two-Tier Ranked Ordering**: Active process traces are dynamically sorted in real time at every hovered timestamp:
+  1. **Process CPU% traces** sorted in **descending order** (highest CPU consumers at the top).
+  2. **Process RAM traces** sorted in **descending order** (highest memory consumers at the top).
+- **Zero-Value Suppression (Noise Reduction)**: Individual process traces with `0%` CPU or `0 MB` Memory are automatically hidden from the unified hover card (`display: none`), preventing dozens of dormant background threads (e.g. `sleep`, idle daemons) from stretching the hover card vertically across the entire viewport.
+- **Dynamic Box Sizing & Boundary Clamping**: The hover card background rectangle and clipping masks dynamically shrink to wrap only active metrics, and the entire hover box is clamped within the chart bounds so headers and readouts are never clipped at the screen edges.
 
 ---
 
