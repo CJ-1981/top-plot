@@ -1251,6 +1251,192 @@
       };
     }
 
+    function setupUnifiedHoverFilter(plotDiv) {
+      if (!plotDiv || typeof MutationObserver === 'undefined') return;
+
+      let isFiltering = false;
+      function filterUnifiedHover() {
+        if (isFiltering) return;
+        isFiltering = true;
+        try {
+          const hoverlayer = plotDiv.querySelector('.hoverlayer');
+          if (!hoverlayer) return;
+          const legendG = hoverlayer.querySelector('g.legend');
+          if (!legendG) return;
+          const groupsG = legendG.querySelector('g.groups');
+          if (!groupsG) return;
+
+          const traceGs = Array.from(groupsG.querySelectorAll('g.traces'));
+          if (traceGs.length === 0) return;
+
+          let rowHeight = 19;
+          if (traceGs.length >= 2) {
+            const getTranslateY = (el) => {
+              const m = (el.getAttribute('transform') || '').match(/translate[(][ 	]*[0-9.-]+[ 	]*,[ 	]*([0-9.-]+)[ 	]*[)]/);
+              return m ? parseFloat(m[1]) : null;
+            };
+            const y0 = getTranslateY(traceGs[0]);
+            const y1 = getTranslateY(traceGs[1]);
+            if (y0 !== null && y1 !== null && y1 > y0) {
+              rowHeight = y1 - y0;
+            }
+          }
+
+          const firstYMatch = (traceGs[0].getAttribute('transform') || '').match(/translate[(][ 	]*([0-9.]+)[ 	]*,[ 	]*([0-9.]+)[ 	]*[)]/);
+          const startX = firstYMatch ? parseFloat(firstYMatch[1]) : 1;
+          let currentY = firstYMatch ? parseFloat(firstYMatch[2]) : 31.1;
+
+          // Classify traces
+          const sysCpuTraces = [];
+          const sysMemTraces = [];
+          const sysOtherTraces = [];
+          const pidCpuTraces = [];
+          const pidMemTraces = [];
+
+          traceGs.forEach((g) => {
+            const textEl = g.querySelector('text.legendtext');
+            const text = textEl ? (textEl.getAttribute('data-unformatted') || textEl.textContent || '') : '';
+            
+            let val = 0;
+            const lastColon = text.lastIndexOf(':');
+            if (lastColon !== -1) {
+              const num = parseFloat(text.substring(lastColon + 1).replace(/,/g, '').trim());
+              if (!isNaN(num)) val = num;
+            }
+
+            const isPid = /^PID[ 	]+[0-9]+/.test(text);
+            if (isPid) {
+              // Hide 0 values for PIDs
+              if (val <= 0) {
+                g.style.display = 'none';
+              } else {
+                g.style.display = '';
+                if (/CPU%/i.test(text)) {
+                  pidCpuTraces.push({ g, text, val });
+                } else {
+                  pidMemTraces.push({ g, text, val });
+                }
+              }
+            } else {
+              // System metrics: always kept on top
+              g.style.display = '';
+              if (/^System Total CPU%/i.test(text)) {
+                sysCpuTraces.push({ g, text, val, order: 1 });
+              } else if (/^System RAM Used/i.test(text)) {
+                sysMemTraces.push({ g, text, val, order: 2 });
+              } else if (/^System Swap Used/i.test(text)) {
+                sysOtherTraces.push({ g, text, val, order: 3 });
+              } else {
+                const bdOrder = {
+                  'CPU %user': 10,
+                  'CPU %sys': 11,
+                  'CPU %nice': 12,
+                  'CPU %irq': 13,
+                  'CPU %sirq': 14,
+                  'CPU %iow': 15,
+                  'CPU %host': 16,
+                  'CPU %idle': 17
+                };
+                let ord = 50;
+                for (const [k, v] of Object.entries(bdOrder)) {
+                  if (text.startsWith(k)) {
+                    ord = v;
+                    break;
+                  }
+                }
+                sysOtherTraces.push({ g, text, val, order: ord });
+              }
+            }
+          });
+
+          // Sort system other traces by predefined order
+          sysOtherTraces.sort((a, b) => a.order - b.order);
+
+          // Sort PID CPU descending
+          pidCpuTraces.sort((a, b) => b.val - a.val);
+
+          // Sort PID MEM descending
+          pidMemTraces.sort((a, b) => b.val - a.val);
+
+          // Ordered list of visible traces:
+          // 1. System Total CPU
+          // 2. System RAM Used
+          // 3. System Swap & CPU Breakdown components
+          // 4. PID CPU traces (descending)
+          // 5. PID RAM traces (descending)
+          const orderedVisible = [
+            ...sysCpuTraces,
+            ...sysMemTraces,
+            ...sysOtherTraces,
+            ...pidCpuTraces,
+            ...pidMemTraces
+          ];
+
+          orderedVisible.forEach((item) => {
+            item.g.setAttribute('transform', 'translate(' + startX + ',' + currentY + ')');
+            currentY += rowHeight;
+          });
+
+          const padding = 15;
+          const newHeight = Math.max(currentY + (padding / 2), 35);
+
+          const bgRect = legendG.querySelector('rect.bg');
+          if (bgRect) {
+            bgRect.setAttribute('height', newHeight);
+          }
+
+          const scrollbox = legendG.querySelector('g.scrollbox');
+          if (scrollbox) {
+            const clipAttr = scrollbox.getAttribute('clip-path');
+            if (clipAttr) {
+              const clipIdMatch = clipAttr.match(/#([^)]+)/);
+              if (clipIdMatch) {
+                const clipRect = plotDiv.querySelector('#' + clipIdMatch[1] + ' rect');
+                if (clipRect) {
+                  clipRect.setAttribute('height', Math.max(currentY + 10, 35));
+                }
+              }
+            }
+          }
+
+          const scrollbar = legendG.querySelector('rect.scrollbar');
+          if (scrollbar) {
+            scrollbar.style.display = 'none';
+          }
+
+          const legendTransform = legendG.getAttribute('transform') || '';
+          const tm = legendTransform.match(/translate[(][ 	]*([0-9.-]+)[ 	]*,[ 	]*([0-9.-]+)[ 	]*[)]/);
+          if (tm) {
+            const legX = parseFloat(tm[1]);
+            let legY = parseFloat(tm[2]);
+            const plotHeight = plotDiv.clientHeight || 600;
+            const topMargin = 25;
+            const btmMargin = 35;
+
+            if (legY < topMargin) {
+              legY = topMargin;
+            } else if (legY + newHeight > plotHeight - btmMargin) {
+              legY = Math.max(topMargin, plotHeight - btmMargin - newHeight);
+            }
+            legendG.setAttribute('transform', 'translate(' + legX + ',' + legY + ')');
+          }
+        } finally {
+          isFiltering = false;
+        }
+      }
+
+      if (plotDiv._unifiedHoverObserver) {
+        plotDiv._unifiedHoverObserver.disconnect();
+      }
+      const hoverObserver = new MutationObserver(filterUnifiedHover);
+      plotDiv._unifiedHoverObserver = hoverObserver;
+      hoverObserver.observe(plotDiv, { childList: true, subtree: true });
+
+      if (plotDiv.on) {
+        plotDiv.on('plotly_hover', filterUnifiedHover);
+      }
+    }
+
     function renderSession(sessionKey) {
       const session = loadedSessions[sessionKey];
       if (!session) return;
@@ -1515,6 +1701,7 @@
       };
 
       Plotly.newPlot("telemetry_plot", traces, layout, { responsive: true });
+      setupUnifiedHoverFilter(document.getElementById("telemetry_plot"));
 
       // Reset marker mode state on session render
       markerMode = false;
