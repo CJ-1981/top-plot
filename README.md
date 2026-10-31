@@ -1,13 +1,13 @@
 # ⚡ Top Log Analyzer — Standalone Web & Desktop Edition
 
 [![GitHub Pages](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-success?style=flat-square&logo=github)](https://CJ-1981.github.io/top-plot/)
-[![Version](https://img.shields.io/badge/Version-v2.3.4-blue.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
+[![Version](https://img.shields.io/badge/Version-v2.3.5-blue.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![Build Date](https://img.shields.io/badge/Build-2026--10--31-informational.svg?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![Plotly](https://img.shields.io/badge/Visualizations-Plotly.js-orange?style=flat-square&logo=plotly)](https://plotly.com/)
 [![Offline Ready](https://img.shields.io/badge/Runtime-100%25%20Offline%20Single--File-brightgreen?style=flat-square)](https://github.com/CJ-1981/top-plot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-An advanced, zero-dependency, single-file telemetry analyzer for Linux, Android, and automotive embedded system `top` and `/proc/meminfo` logs (Current Release: **v2.3.4**, Build: `2026-10-31`). 
+An advanced, zero-dependency, single-file telemetry analyzer for Linux, Android, and automotive embedded system `top` and `/proc/meminfo` logs (Current Release: **v2.3.5**, Build: `2026-10-31`). 
 
 Available both as a **100% offline standalone web application** (running entirely client-side inside your browser with zero server and zero network requests) and as a **rich native Qt desktop application**.
 
@@ -113,7 +113,7 @@ Switch dynamically between curated, WCAG-compliant color palettes with perfect S
 - **Dedicated Legend Scrollbar & Mouse Wheel Scroll**:
   - Traces beyond 5 lines remain fully accessible via an integrated SVG scrollbar and smooth mouse-wheel scrolling.
   - Mouse-wheel events over the legend box prevent canvas zoom propagation (`stopPropagation`), ensuring plot zoom is unaffected while scrolling through legend items.
-- **Zero Empty Top Margin Void**: Employs container-referenced legend coordinate anchoring (`yref: "container"`, `yanchor: "top"`) paired with explicit `autoexpand: false` margin management and synchronized `_reservedMargin` tracking. This completely eliminates Plotly's default multi-hundred-pixel empty top void between the horizontal legend and plot curves, preventing dead margin space from ballooning when dragging the vertical resizer down.
+- **Zero Empty Top Margin Void Across Mobile & Desktop**: Employs container-referenced legend coordinate anchoring (`yref: "container"`, `yanchor: "top"`) paired with a reactive `_reservedMargin` proxy interceptor. This completely eliminates Plotly's default multi-hundred-pixel empty top void between the wrapped horizontal legend and plot curves on narrow mobile screens and large desktop viewports alike, while allowing the bottom margin to dynamically autoexpand for rotated x-axis ticks and zoom rangeslider controls without truncation.
 - **Dedicated Height Allocation on Drag**: When expanding chart height using the vertical resize handle (`#plotResizeHandle` from 300px to 1800px), the legend height remains locked at 5 lines, dedicating 100% of the gained vertical pixels directly to enlarging the telemetry curves and stacked area charts.
 - **Automatic Dynamic Unlock**: When 5 or fewer lines are active (e.g., default view, "Top 5 CPU", "Top 5 MEM", or "Clear All"), the legend automatically unlocks to its natural height, dynamically contracts the top margin to ~35px, and hides the scrollbar.
 
