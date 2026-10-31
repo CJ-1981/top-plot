@@ -803,7 +803,7 @@
       <div class="title-group">
         <h1>⚡ Top Log Analyzer — Standalone Web Edition</h1>
         <span class="badge" id="appModeBadge">Client-Side • Offline Ready</span>
-        <span class="badge" id="appVersionBadge">v2.3.3</span>
+        <span class="badge" id="appVersionBadge">v2.3.4</span>
       </div>
       <div class="header-controls">
         <button type="button" class="btn" id="btnUploadToggle">📂 Upload Logs</button>
@@ -944,9 +944,9 @@
       <div class="footer-left">
         <strong>⚡ Top Log Analyzer</strong>
         <span class="footer-sep">•</span>
-        <span class="footer-badge">v2.3.3</span>
+        <span class="footer-badge">v2.3.4</span>
         <span class="footer-sep">•</span>
-        <span class="footer-dim">Build: 2026-10-30</span>
+        <span class="footer-dim">Build: 2026-10-31</span>
       </div>
       <div class="footer-right">
         <span>Pure Client-Side • 100% Offline Standalone • Zero External Dependencies</span>
@@ -955,10 +955,10 @@
   </div>
 
   <script>
-    const APP_VERSION = "2.3.3";
-    const BUILD_DATE = "2026-10-30";
-    window.APP_VERSION = "2.3.3";
-    window.BUILD_DATE = "2026-10-30";
+    const APP_VERSION = "2.3.4";
+    const BUILD_DATE = "2026-10-31";
+    window.APP_VERSION = "2.3.4";
+    window.BUILD_DATE = "2026-10-31";
 
     const THEMES = {"Dark Fusion": {"bg_window": "#111827", "bg_card": "#1f2937", "bg_header": "#374151", "fg_text": "#f3f4f6", "fg_muted": "#9ca3af", "border": "#374151", "accent_cpu": "#10b981", "accent_mem": "#f59e0b", "grid": "#4b5563", "curve_colors": ["#06b6d4", "#a855f7", "#ec4899", "#3b82f6", "#eab308", "#14b8a6", "#f97316", "#84cc16"], "plotly_template": "plotly_dark"}, "Light Mode": {"bg_window": "#f8fafc", "bg_card": "#ffffff", "bg_header": "#e2e8f0", "fg_text": "#0f172a", "fg_muted": "#64748b", "border": "#cbd5e1", "accent_cpu": "#059669", "accent_mem": "#d97706", "grid": "#94a3b8", "curve_colors": ["#0284c7", "#7c3aed", "#db2777", "#2563eb", "#ca8a04", "#0d9488", "#ea580c", "#65a30d"], "plotly_template": "plotly_white"}, "Midnight Neon": {"bg_window": "#0a0e17", "bg_card": "#111827", "bg_header": "#1f293d", "fg_text": "#e0e7ff", "fg_muted": "#818cf8", "border": "#312e81", "accent_cpu": "#06b6d4", "accent_mem": "#f43f5e", "grid": "#1e293b", "curve_colors": ["#38bdf8", "#c084fc", "#f472b6", "#60a5fa", "#facc15", "#2dd4bf", "#fb923c", "#a3e635"], "plotly_template": "plotly_dark"}, "Solarized Dark": {"bg_window": "#002b36", "bg_card": "#073642", "bg_header": "#094352", "fg_text": "#93a1a1", "fg_muted": "#657b83", "border": "#586e75", "accent_cpu": "#2aa198", "accent_mem": "#b58900", "grid": "#586e75", "curve_colors": ["#268bd2", "#6c71c4", "#d33682", "#859900", "#cb4b16", "#2aa198", "#b58900", "#268bd2"], "plotly_template": "plotly_dark"}, "Monokai": {"bg_window": "#1e1e1e", "bg_card": "#252526", "bg_header": "#333333", "fg_text": "#f8f8f2", "fg_muted": "#75715e", "border": "#3e3e42", "accent_cpu": "#a6e22e", "accent_mem": "#fd971f", "grid": "#49483e", "curve_colors": ["#66d9ef", "#ae81ff", "#f92672", "#a6e22e", "#fd971f", "#e6db74", "#66d9ef", "#ae81ff"], "plotly_template": "plotly_dark"}};
     const DEMO_SNIPPET = "20260917_17-33-01\ntop_cpu:\nTasks: 568 total,   2 running, 566 sleeping,   0 stopped,   0 zombie\n  Mem:  7594756K total,  6227624K used,  1367132K free,    15396K buffers\n Swap:  4194300K total,   255488K used,  3938812K free,  2436928K cached\n800%cpu  59%user  79%nice  62%sys 528%idle   0%iow  14%irq   3%sirq  55%host\n  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS\n 4146 u10_a157     20   0  19G 569M 328M S 93.1   7.6  11:05.20 com.google.android.apps.maps\n 2078 system       18  -2  21G 408M 279M S  3.4   5.5   1:40.49 system_server\n 6864 u10_a160     20   0  18G 198M 125M S  6.8   2.6   2:36.19 com.android.vending:background\n 3904 u10_a112     20   0  17G 156M 112M S  2.1   2.0   0:45.12 com.spotify.music\n 1535 root         20   0 2.1G 45M   28M S  1.5   0.6   0:15.30 surfaceflinger\n\n20260917_17-33-11\ntop_cpu:\nTasks: 567 total,   2 running, 565 sleeping,   0 stopped,   0 zombie\n  Mem:  7594756K total,  6340152K used,  1254604K free,    15396K buffers\n Swap:  4194300K total,   254976K used,  3939324K free,  2531312K cached\n800%cpu  97%user 144%nice 103%sys 322%idle  25%iow  16%irq   3%sirq  91%host\n  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS\n 6864 u10_a160     20   0  18G 198M 125M S 84.3   2.6   2:44.43 com.android.vending:background\n 4146 u10_a157     20   0  19G 566M 328M S 62.5   7.6  11:12.68 com.google.android.apps.maps\n 2078 system       18  -2  21G 408M 279M S 12.0   5.5   1:41.00 system_server\n 3904 u10_a112     20   0  17G 158M 112M S 18.2   2.0   0:46.90 com.spotify.music\n 1535 root         20   0 2.1G 45M   28M S  8.4   0.6   0:16.10 surfaceflinger\n\n20260917_17-33-21\ntop_cpu:\nTasks: 567 total,   1 running, 566 sleeping,   0 stopped,   0 zombie\n  Mem:  7594756K total,  6410200K used,  1184556K free,    15396K buffers\n Swap:  4194300K total,   254976K used,  3939324K free,  2531312K cached\n800%cpu  72%user  85%nice  81%sys 422%idle  10%iow  15%irq   4%sirq  71%host\n  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS\n 4146 u10_a157     20   0  19G 568M 328M S 75.4   7.6  11:20.22 com.google.android.apps.maps\n 2078 system       18  -2  21G 412M 279M S 24.6   5.5   1:43.46 system_server\n 6864 u10_a160     20   0  18G 199M 125M S 14.2   2.6   2:45.85 com.android.vending:background\n 3904 u10_a112     20   0  17G 158M 112M S  5.1   2.0   0:47.41 com.spotify.music\n 1535 root         20   0 2.1G 45M   28M S  4.2   0.6   0:16.52 surfaceflinger\n";
@@ -1970,6 +1970,9 @@
         pidTraceMap[pid] = [cpuIdx, resIdx];
       });
 
+      const isRotatedX = session.timestamps && session.timestamps.length > 8 && (session.timestamps[0] || '').length > 10;
+      const bottomMargin = isRotatedX ? 135 : 40;
+
       const layout = {
         template: theme.plotly_template || (currentTheme === "Light Mode" ? "plotly_white" : "plotly_dark"),
         paper_bgcolor: theme.bg_window,
@@ -1982,7 +1985,7 @@
           bordercolor: theme.border,
           font: { color: theme.fg_text, size: 11, family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }
         },
-        margin: { l: 45, r: 45, t: 35, b: 160, autoexpand: true },
+        margin: { l: 45, r: 45, t: 35, b: bottomMargin, autoexpand: true },
         annotations: annotations,
         legend: {
           orientation: "h",
@@ -3384,7 +3387,6 @@
         }),
         margin: {
           ...plotDiv.layout.margin,
-          b: 160,
           autoexpand: true
         },
         legend: {
